@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bharat Browser v1.0.0</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="theme-obsidian">
+  <!-- Top Titlebar & Navigation Bar -->
+  <div id="top-bar">
+    <!-- Brand & Tab Strip -->
+    <div id="tab-bar">
+      <div id="brand-badge" title="Bharat Browser - Made in India 🇮🇳">
+        <i class="fa-solid fa-compass"></i> Bharat
+      </div>
+      <div id="tabs-container"></div>
+      <button id="btn-new-tab" title="New Tab"><i class="fa-solid fa-plus"></i></button>
+    </div>
+
+    <!-- Navigation Controls & Address Bar -->
+    <div id="toolbar">
+      <button id="btn-back" class="nav-btn" title="Back" disabled><i class="fa-solid fa-arrow-left"></i></button>
+      <button id="btn-forward" class="nav-btn" title="Forward" disabled><i class="fa-solid fa-arrow-right"></i></button>
+      <button id="btn-reload" class="nav-btn" title="Reload"><i class="fa-solid fa-rotate-right"></i></button>
+      <button id="btn-home" class="nav-btn" title="Home"><i class="fa-solid fa-house"></i></button>
+
+      <!-- URL Input Box -->
+      <div id="url-bar-container">
+        <span id="security-badge" title="HTTPS Secure Connection"><i class="fa-solid fa-lock text-success"></i></span>
+        <input type="text" id="url-input" placeholder="Search Google or enter web address..." value="https://www.google.co.in">
+      </div>
+
+      <!-- Action Badges -->
+      <button id="btn-shield" class="badge-btn shield-badge" title="Security & Ad-Block Report">
+        <i class="fa-solid fa-shield-halved"></i> Shield: <span id="shield-count">0</span>
+      </button>
+
+      <div id="hardware-badge" class="badge-btn spec-badge" title="Hardware Spec Optimization Engine">
+        <i class="fa-solid fa-microchip"></i> <span id="spec-mode-text">AUTO SPEC</span>
+      </div>
+
+      <button id="btn-settings" class="nav-btn" title="Settings ⚙️"><i class="fa-solid fa-gear"></i></button>
+    </div>
+  </div>
+
+  <!-- Webviews Container -->
+  <div id="webviews-container"></div>
+
+  <!-- Integrated Download Manager Panel Drawer -->
+  <div id="download-drawer" class="drawer hidden">
+    <div class="drawer-header">
+      <h4><i class="fa-solid fa-download"></i> Integrated Download Manager</h4>
+      <button id="close-drawer" class="close-btn">&times;</button>
+    </div>
+    <div id="download-list" class="drawer-body">
+      <div class="empty-downloads">No active or recent downloads</div>
+    </div>
+  </div>
+
+  <!-- Status Bar Footer -->
+  <div id="statusbar">
+    <span id="status-text">Bharat Browser Ready | Made in INDIA 🇮🇳</span>
+    <span id="system-spec-info">System RAM: Detecting...</span>
+  </div>
+
+  <!-- Settings Modal Dialog -->
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-content glassmorphism">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-sliders"></i> Browser Settings & Extensions</h3>
+        <button id="close-modal" class="close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+
+        <!-- Section 1: Performance -->
+        <div class="settings-card">
+          <div class="card-title"><i class="fa-solid fa-microchip text-accent"></i> Performance & Hardware</div>
+          <div class="setting-item">
+            <label for="spec-toggle">Spec Optimization Profile:</label>
+            <select id="spec-toggle">
+              <option value="auto">⚡ Auto-Detect System Hardware</option>
+              <option value="low">🍃 Low Spec (Memory Saver & Process Limit)</option>
+              <option value="high">🔥 High Spec (GPU Hardware Acceleration)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Section 2: Appearance -->
+        <div class="settings-card">
+          <div class="card-title"><i class="fa-solid fa-moon text-indigo"></i> Appearance</div>
+          <div class="setting-item row-item">
+            <input type="checkbox" id="chk-darkreader">
+            <label for="chk-darkreader"><strong>DarkReader Engine:</strong> High-Contrast Dark Theme on Webpages</label>
+          </div>
+        </div>
+
+        <!-- Section 3: Privacy & Security -->
+        <div class="settings-card">
+          <div class="card-title"><i class="fa-solid fa-shield-halved text-success"></i> Privacy & Security</div>
+          <div class="setting-item row-item">
+            <input type="checkbox" id="chk-adblock" checked>
+            <label for="chk-adblock"><strong>uBlock & Privacy Badger:</strong> 2-Stage Filter (> 25,000 req/sec)</label>
+          </div>
+          <div class="setting-item row-item">
+            <input type="checkbox" id="chk-clearurls" checked>
+            <label for="chk-clearurls"><strong>ClearURLs Engine:</strong> Strip tracking parameters from URLs</label>
+          </div>
+          <div class="setting-item row-item">
+            <input type="checkbox" id="chk-https" checked>
+            <label for="chk-https"><strong>HTTPS Enforcement:</strong> Upgrade non-local HTTP to HTTPS</label>
+          </div>
+        </div>
+
+        <!-- Section 4: Data Management & Downloads -->
+        <div class="settings-card">
+          <div class="card-title"><i class="fa-solid fa-box-archive text-orange"></i> Data & Downloads</div>
+          <div class="setting-actions-row">
+            <button id="btn-open-downloads" class="setting-action-btn">
+              <i class="fa-solid fa-download"></i> Downloads (<span id="download-count">0</span>)
+            </button>
+            <button id="btn-clear-data" class="btn-danger-clear">
+              <i class="fa-solid fa-trash-can"></i> Clear History & Cookies
+            </button>
+          </div>
+          <div id="clear-status-toast" class="toast-feedback hidden">
+            <i class="fa-solid fa-circle-check"></i> Browsing History, Cache & Cookies Cleared!
+          </div>
+        </div>
+
+        <!-- Section 5: About -->
+        <div class="settings-card about-card-bg">
+          <div class="about-header">
+            <div class="about-logo"><i class="fa-solid fa-compass"></i> Bharat Browser</div>
+            <span class="version-badge" id="about-version-tag">v1.0.0 Stable</span>
+          </div>
+          <div class="about-details">
+            <div><i class="fa-solid fa-bolt text-warning"></i> GPU Acceleration: Enabled</div>
+            <div><i class="fa-solid fa-shield-halved text-success"></i> 2-Stage Ad & Privacy Engine Active</div>
+            <div><i class="fa-solid fa-heart text-danger"></i> Engineered in INDIA with Pride 🇮🇳</div>
+          </div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <span>Bharat Browser v1.0.0 | Engineered in INDIA with Pride 🇮🇳❤️</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
