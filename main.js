@@ -29,7 +29,7 @@ function createWindow() {
     height: 850,
     minWidth: 800,
     minHeight: 600,
-    title: 'Bharat Browser v1.1.0',
+    title: 'Bharat Browser v2.3.0',
     backgroundColor: '#030712',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -45,7 +45,7 @@ function createWindow() {
 
   // Modern Universal User Agent
   webSession.setUserAgent(
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 BharatBrowser/1.1.0'
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 BharatBrowser/2.3.0'
   );
 
   // Integrated Download Manager Setup
@@ -109,7 +109,7 @@ ipcMain.handle('get-system-specs', () => {
   return {
     totalRamGb: TOTAL_RAM_GB.toFixed(1),
     isLowSpec: IS_LOW_SPEC,
-    version: '1.1.0'
+    version: '2.3.0'
   };
 });
 

@@ -1,6 +1,6 @@
 {
   "name": "bharat-browser",
-  "version": "1.1.0",
+  "version": "2.3.0",
   "description": "Bharat Browser - Secure, Privacy-Focused Modern Web Browser",
   "main": "main.js",
   "scripts": {
