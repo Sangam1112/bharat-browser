@@ -136,6 +136,11 @@ function createTab(url = DEFAULT_HOMEPAGE) {
     }
   });
 
+  webview.addEventListener('new-window', (e) => {
+    e.preventDefault();
+    createTab(e.url);
+  });
+
   webview.addEventListener('did-navigate-in-page', (e) => {
     tabObj.url = e.url;
     if (activeTabId === tabId) {
@@ -321,6 +326,32 @@ if (btnClearData) {
 // Settings Modal
 btnSettings.addEventListener('click', () => settingsModal.classList.remove('hidden'));
 closeModal.addEventListener('click', () => settingsModal.classList.add('hidden'));
+
+// Global Keyboard Shortcuts (Ctrl+T, Ctrl+W, Ctrl+R, Ctrl+L, F5)
+window.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey) {
+    const key = e.key.toLowerCase();
+    if (key === 't') {
+      e.preventDefault();
+      createTab(DEFAULT_HOMEPAGE);
+    } else if (key === 'w') {
+      e.preventDefault();
+      if (activeTabId) closeTab(activeTabId);
+    } else if (key === 'r') {
+      e.preventDefault();
+      const currentTab = tabs.find(t => t.id === activeTabId);
+      if (currentTab) currentTab.webview.reload();
+    } else if (key === 'l') {
+      e.preventDefault();
+      urlInput.focus();
+      urlInput.select();
+    }
+  } else if (e.key === 'F5') {
+    e.preventDefault();
+    const currentTab = tabs.find(t => t.id === activeTabId);
+    if (currentTab) currentTab.webview.reload();
+  }
+});
 
 // Initialize App
 initSystemSpecs();

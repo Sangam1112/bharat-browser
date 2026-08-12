@@ -88,6 +88,20 @@ function createWindow() {
 
     return callback({ cancel: false });
   });
+
+  // Security Headers Enforcement
+  webSession.webRequest.onHeadersReceived((details, callback) => {
+    const responseHeaders = Object.assign({}, details.responseHeaders);
+
+    if (!responseHeaders['X-Content-Type-Options'] && !responseHeaders['x-content-type-options']) {
+      responseHeaders['X-Content-Type-Options'] = ['nosniff'];
+    }
+    if (!responseHeaders['Referrer-Policy'] && !responseHeaders['referrer-policy']) {
+      responseHeaders['Referrer-Policy'] = ['strict-origin-when-cross-origin'];
+    }
+
+    callback({ responseHeaders });
+  });
 }
 
 // IPC Handlers
