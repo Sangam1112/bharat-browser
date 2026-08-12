@@ -42,6 +42,7 @@
 ### 📸 Page Capture & Productivity
 * **Instant Webpage Screenshot**: Built-in option to capture full webpage screenshots instantly saved as JPEG images directly to your Desktop.
 * **Privacy Shield Stats**: Real-time dashboard widget displaying the cumulative total of blocked trackers and ad requests.
+* **Git Auto-Update Sync**: Automatically queries GitHub API on startup and via manual "Check for Updates" button; downloads higher `.deb` releases in the background, alerts the user upon upgrade completion, and updates the About section dynamically.
 
 ---
 
