@@ -1,8 +1,8 @@
-# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.0.1
+# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.0.2
 
 > **Modern, Ultra-Fast, and Privacy-First Web Browser engineered for Linux (Ubuntu)**
 
-[![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://github.com/Sangam1112/bharat-browser)
+[![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](https://github.com/Sangam1112/bharat-browser)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Ubuntu%20%7C%20Linux-orange.svg)]()
 [![Privacy](https://img.shields.io/badge/privacy-Strict%20Enforcement-red.svg)]()
@@ -54,7 +54,7 @@ Bharat Browser produces a fully versioned `.deb` package built specifically for 
 
 ```bash
 # Download or locate the generated .deb file
-sudo dpkg -i bharat-browser_1.0.1_amd64.deb
+sudo dpkg -i bharat-browser_1.0.2_amd64.deb
 
 # Resolve any missing dependencies if prompted
 sudo apt-get install -f
@@ -86,7 +86,7 @@ npm install
 npm run build:deb
 ```
 
-The resulting package will be generated at `./bharat-browser_1.0.1_amd64.deb`.
+The resulting package will be generated at `./bharat-browser_1.0.2_amd64.deb`.
 
 ---
 
