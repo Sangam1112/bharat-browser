@@ -220,6 +220,36 @@ btnHome.addEventListener('click', () => {
   if (currentTab) currentTab.webview.loadURL(DEFAULT_HOMEPAGE);
 });
 
+// Screenshot Handler (Saves JPEG automatically to Desktop)
+const btnScreenshot = document.getElementById('btn-screenshot');
+if (btnScreenshot) {
+  btnScreenshot.addEventListener('click', async () => {
+    const currentTab = tabs.find(t => t.id === activeTabId);
+    if (!currentTab || !currentTab.webview) {
+      statusText.textContent = '⚠️ No active webpage tab to capture screenshot.';
+      return;
+    }
+
+    try {
+      statusText.textContent = '📸 Capturing webpage screenshot...';
+      const nativeImage = await currentTab.webview.capturePage();
+      const dataUrl = nativeImage.toJPEG(90);
+
+      if (window.bharatAPI) {
+        const res = await window.bharatAPI.saveScreenshot(dataUrl);
+        if (res && res.success) {
+          statusText.textContent = `📸 Screenshot saved to Desktop: ${res.filename}`;
+        } else {
+          statusText.textContent = '❌ Failed to save screenshot to Desktop.';
+        }
+      }
+    } catch (e) {
+      console.error('Error capturing screenshot:', e);
+      statusText.textContent = '❌ Screenshot capture failed.';
+    }
+  });
+}
+
 urlInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     const currentTab = tabs.find(t => t.id === activeTabId);

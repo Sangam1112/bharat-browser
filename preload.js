@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('bharatAPI', {
   getDarkReaderCSS: () => ipcRenderer.invoke('get-darkreader-css'),
   getDownloads: () => ipcRenderer.invoke('get-downloads'),
   clearBrowsingData: () => ipcRenderer.invoke('clear-browsing-data'),
+  saveScreenshot: (dataUrl) => ipcRenderer.invoke('save-screenshot', dataUrl),
   onTrackerBlocked: (callback) => {
     ipcRenderer.on('tracker-blocked-event', (event, data) => callback(data));
   },

@@ -29,7 +29,7 @@ function createWindow() {
     height: 850,
     minWidth: 800,
     minHeight: 600,
-    title: 'Bharat Browser v1.0.0',
+    title: 'Bharat Browser v1.1.0',
     backgroundColor: '#030712',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -45,7 +45,7 @@ function createWindow() {
 
   // Modern Universal User Agent
   webSession.setUserAgent(
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 BharatBrowser/1.0.0'
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 BharatBrowser/1.1.0'
   );
 
   // Integrated Download Manager Setup
@@ -109,7 +109,7 @@ ipcMain.handle('get-system-specs', () => {
   return {
     totalRamGb: TOTAL_RAM_GB.toFixed(1),
     isLowSpec: IS_LOW_SPEC,
-    version: '1.0.0'
+    version: '1.1.0'
   };
 });
 
@@ -135,6 +135,26 @@ ipcMain.handle('clear-browsing-data', async () => {
     return { success: true };
   } catch (e) {
     console.error('Error clearing data:', e);
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('save-screenshot', async (event, dataUrl) => {
+  try {
+    const desktopDir = path.join(os.homedir(), 'Desktop');
+    if (!fs.existsSync(desktopDir)) {
+      fs.mkdirSync(desktopDir, { recursive: true });
+    }
+    const timestamp = new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 15);
+    const filename = `BharatScreenshot_${timestamp}.jpeg`;
+    const filepath = path.join(desktopDir, filename);
+
+    const base64Data = dataUrl.replace(/^data:image\/jpeg;base64,/, '').replace(/^data:image\/png;base64,/, '');
+    fs.writeFileSync(filepath, Buffer.from(base64Data, 'base64'));
+
+    return { success: true, filepath, filename };
+  } catch (e) {
+    console.error('Error saving screenshot:', e);
     return { success: false, error: e.message };
   }
 });

@@ -2,10 +2,12 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const BUILD_DIR = '/tmp/bharat-deb/bharat-browser_1.0.0_amd64';
-const DEB_OUTPUT = path.join(__dirname, 'bharat-browser_1.0.0_amd64.deb');
+const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf-8'));
+const VERSION = pkg.version;
+const BUILD_DIR = `/tmp/bharat-deb/bharat-browser_${VERSION}_amd64`;
+const DEB_OUTPUT = path.join(__dirname, `bharat-browser_${VERSION}_amd64.deb`);
 
-console.log('🇮🇳 Building Bharat Browser v1.0.0 .deb package for Ubuntu...');
+console.log(`🇮🇳 Building Bharat Browser v${VERSION} .deb package for Ubuntu...`);
 
 // Clean & Create Directories
 execSync(`rm -rf ${BUILD_DIR}`);
@@ -16,7 +18,7 @@ fs.mkdirSync(path.join(BUILD_DIR, 'usr/share/bharat-browser'), { recursive: true
 
 // 1. DEBIAN/control
 const controlContent = `Package: bharat-browser
-Version: 1.0.0
+Version: ${VERSION}
 Section: web
 Priority: optional
 Architecture: amd64
@@ -29,7 +31,7 @@ fs.writeFileSync(path.join(BUILD_DIR, 'DEBIAN/control'), controlContent);
 
 // 2. /usr/bin/bharat-browser launcher
 const launcherContent = `#!/bin/bash
-# Bharat Browser v2.3.0 Launcher
+# Bharat Browser v${VERSION} Launcher
 npx electron /usr/share/bharat-browser "$@"
 `;
 const binPath = path.join(BUILD_DIR, 'usr/bin/bharat-browser');
