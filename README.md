@@ -1,8 +1,8 @@
-# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.3
+# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.4
 
 > **Modern, Ultra-Fast, and Privacy-First Web Browser engineered for Linux (Ubuntu)**
 
-[![Version](https://img.shields.io/badge/version-1.2.3-blue.svg)](https://github.com/Sangam1112/bharat-browser)
+[![Version](https://img.shields.io/badge/version-1.2.4-blue.svg)](https://github.com/Sangam1112/bharat-browser)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Ubuntu%20%7C%20Linux-orange.svg)]()
 [![Privacy](https://img.shields.io/badge/privacy-Strict%20Enforcement-red.svg)]()
@@ -17,10 +17,16 @@
 
 ## ✨ Key Specifications & Features
 
+### 🗂️ Multi-Tab Architecture & Performance Tuning
+* **Native Multi-Tab Workspace**: Powered by `Gtk.Notebook` allowing instant creation (Ctrl+T), tab switching, and closing (Ctrl+W) with shared high-speed WebContext cache.
+* **Smart Link Prefetching Engine**: Injected `mouseenter` hover listener pre-resolves DNS (`dns-prefetch`) and warms up TLS connections (`preconnect`) prior to user clicks.
+* **Process Crash Resilience**: Automatic `web-process-terminated` signal handling auto-recovers tabs seamlessly during OOM spikes or render crashes.
+* **WebKit2 DataManager Cache**: Optimized disk and RAM caching via custom `WebsiteDataManager` paths (`~/.cache/bharat-browser`).
+
 ### 🔒 Privacy & Security Defaults
 * **2-Stage Request Interceptor**: High-throughput filter architecture using an $O(1)$ domain pre-lookup hash set followed by path regular expressions (maintaining throughput > 25,000 requests/sec).
 * **Open-Source Ad & Tracker Blocking**: Native integration of uBlock Origin Lite and Privacy Badger filter lists to block intrusive ad servers, trackers, and telemetry scripts.
-* **ClearURLs URL Sanitization**: Automatically strips privacy-invading query parameters (e.g., `utm_*`, `fbclid`, `gclid`, `msclkid`) before network requests leave the device.
+* **ClearURLs URL Sanitization**: Automatically strips privacy-invading query parameters (e.g., `utm_*`, `fbclid`, `gclid`, `msclkid`, `mc_eid`, `yclid`, `igshid`) before network requests leave the device.
 * **HTTPS Enforcement**: Auto-upgrades non-secure `http://` connections to `https://` across all web navigation.
 * **Security Headers Enforcement**: Injects strict HTTP response headers (`X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`) to mitigate MIME-sniffing and cross-origin leaks.
 
@@ -36,14 +42,6 @@
 ### 📥 Integrated Download Manager
 * **Native Downloads**: Built-in download manager featuring real-time download speed calculation, progress tracking, file organization, and desktop notifications.
 
-### 🌐 Universal Website Compatibility
-* **Native WebContents Layer**: Guarantees compatibility with modern Web Standards (HTML5, WebAssembly, WebGL, Progressive Web Apps) and complex web platforms (Google Workspace, YouTube, GitHub, trading portals).
-
-### 📸 Page Capture & Productivity
-* **Instant Webpage Screenshot**: Built-in option to capture full webpage screenshots instantly saved as JPEG images directly to your Desktop.
-* **Privacy Shield Stats**: Real-time dashboard widget displaying the cumulative total of blocked trackers and ad requests.
-* **Git Auto-Update Sync**: Automatically queries GitHub API on startup and via manual "Check for Updates" button; downloads higher `.deb` releases in the background, alerts the user upon upgrade completion, and updates the About section dynamically.
-
 ---
 
 ## 📦 Package Details & Ubuntu Installation
@@ -54,7 +52,7 @@ Bharat Browser produces a fully versioned `.deb` package built specifically for 
 
 ```bash
 # Download or locate the generated .deb file
-sudo dpkg -i bharat-browser_1.2.3_amd64.deb
+sudo dpkg -i bharat-browser_1.2.4_amd64.deb
 
 # Resolve any missing dependencies if prompted
 sudo apt-get install -f
@@ -86,32 +84,11 @@ npm install
 npm run build:deb
 ```
 
-The resulting package will be generated at `./bharat-browser_1.2.3_amd64.deb`.
-
----
-
-## 📂 Project Architecture
-
-```
-bharat-browser/
-├── main.js                  # Main process: session hooks, security headers, hardware profiling
-├── preload.js               # IPC bridge & context isolation layer
-├── build-deb.js             # Automated Ubuntu .deb packager
-├── package.json             # App metadata & dependency configuration
-├── README.md                # Project documentation & technical specifications
-├── src/
-│   ├── adblocker.js         # 2-Stage filter (O(1) domain lookup + path regex)
-│   ├── clearurls.js         # URL query parameter sanitizer
-│   ├── darkreader.js        # DarkReader CSS generator
-│   └── downloadManager.js   # Multi-threaded download state manager
-└── renderer/
-    ├── index.html           # Dark glassmorphism browser UI frame
-    ├── app.js               # Tab manager, navigation control & renderer logic
-    └── style.css            # Custom styling system
-```
+The resulting package will be generated at `./bharat-browser_1.2.4_amd64.deb`.
 
 ---
 
 ## 📄 License
 
 This project is licensed under the [MIT License](LICENSE).
+
