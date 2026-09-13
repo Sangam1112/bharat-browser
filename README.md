@@ -44,11 +44,27 @@
 
 ---
 
-## 📦 Package Details & Ubuntu Installation
+## 📦 Installation Guide (Fedora & Ubuntu/Debian)
 
-Bharat Browser produces a fully versioned `.deb` package built specifically for Ubuntu and Debian-based Linux distributions.
+### 🔵 Fedora Linux Installation
 
-### Installing via `.deb` Package
+You can install Bharat Browser natively on Fedora Linux using the included installer script or tarball package:
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/Sangam1112/bharat-browser.git
+cd bharat-browser
+
+# 2. Run the Fedora installer script
+./install-fedora.sh
+```
+
+Alternatively, to build an `.rpm` package or Fedora archive:
+```bash
+./build-rpm.sh
+```
+
+### 🟠 Ubuntu / Debian Installation
 
 ```bash
 # Download or locate the generated .deb file
@@ -58,33 +74,15 @@ sudo dpkg -i bharat-browser_1.2.4_amd64.deb
 sudo apt-get install -f
 ```
 
-### Launching Bharat Browser
+---
+
+## 🚀 Launching Bharat Browser
 
 Run from terminal:
 ```bash
 bharat-browser
 ```
 Or launch **Bharat Browser** directly from your desktop application launcher menu.
-
----
-
-## 🛠️ Building `.deb` Package from Source
-
-To compile and package the browser as a `.deb` binary:
-
-```bash
-# Clone the public repository
-git clone https://github.com/Sangam1112/bharat-browser.git
-cd bharat-browser
-
-# Install dependencies
-npm install
-
-# Build versioned .deb package
-npm run build:deb
-```
-
-The resulting package will be generated at `./bharat-browser_1.2.4_amd64.deb`.
 
 ---
 

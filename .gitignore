@@ -1,0 +1,6 @@
+*.tar.gz
+*.rpm
+__pycache__/
+*.pyc
+/tmp/
+EOF

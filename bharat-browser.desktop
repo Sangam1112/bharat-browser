@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Bharat Browser
+Comment=Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Fedora & Ubuntu)
+Exec=bharat-browser %U
+Icon=bharat-browser
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+StartupWMClass=bharat-browser

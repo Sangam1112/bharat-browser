@@ -1,0 +1,11 @@
+#!/bin/bash
+# Bharat Browser Fedora / Linux Launcher
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -f "/usr/share/bharat-browser/bharat_browser.py" ]; then
+    exec python3 /usr/share/bharat-browser/bharat_browser.py "$@"
+elif [ -f "${SCRIPT_DIR}/bharat_browser.py" ]; then
+    exec python3 "${SCRIPT_DIR}/bharat_browser.py" "$@"
+else
+    exec python3 bharat_browser.py "$@"
+fi
