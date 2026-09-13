@@ -48,8 +48,7 @@
 
 ### 🔵 Fedora Linux Installation
 
-You can install Bharat Browser natively on Fedora Linux using the included installer script or tarball package:
-
+**Option A: Install via Git / Local repository**
 ```bash
 # 1. Clone the repository
 git clone https://github.com/Sangam1112/bharat-browser.git
@@ -59,9 +58,13 @@ cd bharat-browser
 ./install-fedora.sh
 ```
 
-Alternatively, to build an `.rpm` package or Fedora archive:
+**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.4_fedora.tar.gz`)**
 ```bash
-./build-rpm.sh
+# 1. Extract the release archive
+tar -xzf bharat-browser_1.2.4_fedora.tar.gz -C /tmp/bharat_fedora
+
+# 2. Run installer script from archive
+cd /tmp/bharat_fedora && ./install-fedora.sh
 ```
 
 ### 🟠 Ubuntu / Debian Installation
