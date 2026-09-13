@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build script to produce RPM package for Fedora / RHEL
+# Build script to produce RPM package and standalone release tarball for Fedora / RHEL
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,7 +9,7 @@ VERSION="1.2.4"
 PKG_NAME="bharat-browser"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
 
-echo "Building RPM package for ${PKG_NAME} v${VERSION}..."
+echo "Building package for ${PKG_NAME} v${VERSION}..."
 
 rm -rf "$BUILD_ROOT"
 mkdir -p "${BUILD_ROOT}/usr/share/bharat-browser/assets"
@@ -22,8 +22,9 @@ cp -r assets/* "${BUILD_ROOT}/usr/share/bharat-browser/assets/"
 cp bharat-browser "${BUILD_ROOT}/usr/bin/bharat-browser"
 cp bharat-browser.desktop "${BUILD_ROOT}/usr/share/applications/"
 cp assets/bharat_icon.png "${BUILD_ROOT}/usr/share/icons/hicolor/256x256/apps/bharat-browser.png"
+cp install-fedora.sh "${BUILD_ROOT}/install-fedora.sh"
 
-chmod +x "${BUILD_ROOT}/usr/bin/bharat-browser" "${BUILD_ROOT}/usr/share/bharat-browser/bharat_browser.py"
+chmod +x "${BUILD_ROOT}/usr/bin/bharat-browser" "${BUILD_ROOT}/usr/share/bharat-browser/bharat_browser.py" "${BUILD_ROOT}/install-fedora.sh"
 
 if command -v rpmbuild &> /dev/null; then
     mkdir -p ~/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
@@ -57,9 +58,9 @@ EOF
 
     rpmbuild -bb ~/rpmbuild/SPECS/bharat-browser.spec
     cp ~/rpmbuild/RPMS/noarch/bharat-browser-${VERSION}-1*.noarch.rpm ./
-    echo "RPM package generated: $(ls bharat-browser-${VERSION}-1*.noarch.rpm)"
-else
-    echo "rpmbuild not installed. Packaging standalone tarball for Fedora..."
-    tar -czf "bharat-browser_${VERSION}_fedora.tar.gz" -C "$BUILD_ROOT" .
-    echo "Archive generated: bharat-browser_${VERSION}_fedora.tar.gz"
 fi
+
+# Package standalone tarball for Fedora
+tar -czf "bharat-browser_${VERSION}_fedora.tar.gz" -C "$BUILD_ROOT" .
+cp "bharat-browser_${VERSION}_fedora.tar.gz" /home/parabz/Downloads/bharat-browser_${VERSION}_fedora.tar.gz
+echo "Archive generated: bharat-browser_${VERSION}_fedora.tar.gz"
