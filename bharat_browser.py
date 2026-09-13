@@ -337,14 +337,19 @@ class BharatBrowserWindow(Gtk.Window):
         self.set_default_size(1280, 850)
         self.set_position(Gtk.WindowPosition.CENTER)
 
+        self.icon_path = None
         icon_candidates = [
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "bharat_icon.png"),
             "/usr/share/bharat-browser/assets/bharat_icon.png",
+            "/usr/share/icons/hicolor/256x256/apps/bharat-browser.png",
             "/usr/share/icons/hicolor/128x128/apps/bharat-browser.png",
-            os.path.expanduser("~/.local/share/icons/bharat-browser.png")
+            os.path.expanduser("~/.local/share/icons/hicolor/256x256/apps/bharat-browser.png"),
+            os.path.expanduser("~/.local/share/icons/bharat-browser.png"),
+            os.path.expanduser("~/.local/share/bharat-browser/assets/bharat_icon.png")
         ]
         for candidate in icon_candidates:
             if os.path.exists(candidate):
+                self.icon_path = candidate
                 try:
                     self.set_icon_from_file(candidate)
                     break
@@ -392,8 +397,11 @@ class BharatBrowserWindow(Gtk.Window):
         self.web_settings.set_media_playback_allows_inline(True)
         self.web_settings.set_media_playback_requires_user_gesture(False)
         self.web_settings.set_hardware_acceleration_policy(WebKit2.HardwareAccelerationPolicy.ALWAYS)
-        if hasattr(self.web_settings, 'set_enable_dns_prefetching'):
-            self.web_settings.set_enable_dns_prefetching(True)
+        try:
+            if hasattr(self.web_settings, 'set_enable_dns_prefetching'):
+                self.web_settings.set_enable_dns_prefetching(True)
+        except Exception:
+            pass
         if hasattr(self.web_settings, 'set_enable_smooth_scrolling'):
             self.web_settings.set_enable_smooth_scrolling(True)
         self.web_settings.set_enable_html5_database(True)
@@ -419,9 +427,9 @@ class BharatBrowserWindow(Gtk.Window):
         # Brand Badge
         brand_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         brand_box.get_style_context().add_class("brand-box")
-        if os.path.exists(icon_path):
+        if self.icon_path and os.path.exists(self.icon_path):
             try:
-                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(icon_path, 22, 22, True)
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(self.icon_path, 22, 22, True)
                 brand_img = Gtk.Image.new_from_pixbuf(pixbuf)
                 brand_box.pack_start(brand_img, False, False, 0)
             except Exception:
