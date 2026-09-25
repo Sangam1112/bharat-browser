@@ -1,8 +1,8 @@
-# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.4
+# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.5
 
 > **Modern, Ultra-Fast, and Privacy-First Web Browser engineered for Linux (Ubuntu)**
 
-[![Version](https://img.shields.io/badge/version-1.2.4-blue.svg)](https://github.com/Sangam1112/bharat-browser)
+[![Version](https://img.shields.io/badge/version-1.2.5-blue.svg)](https://github.com/Sangam1112/bharat-browser)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Ubuntu%20%7C%20Linux-orange.svg)]()
 [![Privacy](https://img.shields.io/badge/privacy-Strict%20Enforcement-red.svg)]()
@@ -58,10 +58,10 @@ cd bharat-browser
 ./install-fedora.sh
 ```
 
-**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.4_fedora.tar.gz`)**
+**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.5_fedora.tar.gz`)**
 ```bash
 # 1. Extract the release archive
-tar -xzf bharat-browser_1.2.4_fedora.tar.gz -C /tmp/bharat_fedora
+tar -xzf bharat-browser_1.2.5_fedora.tar.gz -C /tmp/bharat_fedora
 
 # 2. Run installer script from archive
 cd /tmp/bharat_fedora && ./install-fedora.sh
@@ -71,7 +71,7 @@ cd /tmp/bharat_fedora && ./install-fedora.sh
 
 ```bash
 # Download or locate the generated .deb file
-sudo dpkg -i bharat-browser_1.2.4_amd64.deb
+sudo dpkg -i bharat-browser_1.2.5_amd64.deb
 
 # Resolve any missing dependencies if prompted
 sudo apt-get install -f

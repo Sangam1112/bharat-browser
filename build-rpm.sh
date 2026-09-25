@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.4"
+VERSION="1.2.5"
 PKG_NAME="bharat-browser"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
 
@@ -22,9 +22,8 @@ cp -r assets/* "${BUILD_ROOT}/usr/share/bharat-browser/assets/"
 cp bharat-browser "${BUILD_ROOT}/usr/bin/bharat-browser"
 cp bharat-browser.desktop "${BUILD_ROOT}/usr/share/applications/"
 cp assets/bharat_icon.png "${BUILD_ROOT}/usr/share/icons/hicolor/256x256/apps/bharat-browser.png"
-cp install-fedora.sh "${BUILD_ROOT}/install-fedora.sh"
 
-chmod +x "${BUILD_ROOT}/usr/bin/bharat-browser" "${BUILD_ROOT}/usr/share/bharat-browser/bharat_browser.py" "${BUILD_ROOT}/install-fedora.sh"
+chmod +x "${BUILD_ROOT}/usr/bin/bharat-browser" "${BUILD_ROOT}/usr/share/bharat-browser/bharat_browser.py"
 
 if command -v rpmbuild &> /dev/null; then
     mkdir -p ~/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
@@ -52,6 +51,13 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Fri Sep 25 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.5-1
+- Fix tab-lookup attribute mangling bug breaking Back/Forward/Reload/session-restore/dark-mode
+- Fix anti-fingerprinting script to inject before page scripts run
+- Fix ad-block streaming exemption to match hostname instead of raw substring
+- Downloads now saved to XDG Downloads dir with collision-safe filenames
+- Add optional Developer Tools toggle (off by default)
+- Modernized UI: flat theme, segmented nav controls, URL bar security icon
 * Sun Sep 13 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.4-1
 - Fedora Linux release support
 EOF
@@ -60,7 +66,9 @@ EOF
     cp ~/rpmbuild/RPMS/noarch/bharat-browser-${VERSION}-1*.noarch.rpm ./
 fi
 
-# Package standalone tarball for Fedora
+# Package standalone tarball for Fedora (includes install-fedora.sh, unlike the RPM buildroot)
+cp install-fedora.sh "${BUILD_ROOT}/install-fedora.sh"
+chmod +x "${BUILD_ROOT}/install-fedora.sh"
 tar -czf "bharat-browser_${VERSION}_fedora.tar.gz" -C "$BUILD_ROOT" .
 cp "bharat-browser_${VERSION}_fedora.tar.gz" /home/parabz/Downloads/bharat-browser_${VERSION}_fedora.tar.gz
 echo "Archive generated: bharat-browser_${VERSION}_fedora.tar.gz"

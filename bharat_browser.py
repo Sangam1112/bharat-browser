@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.4 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.5 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -16,6 +16,7 @@ import re
 import json
 import time
 import threading
+import subprocess
 import urllib.parse
 import urllib.request
 import gi
@@ -79,15 +80,30 @@ TRACKING_PARAMS = {
     'fbclid', 'gclid', 'msclkid', 'mc_eid', 'yclid', '_openstat', 'igshid'
 }
 
+STREAMING_EXEMPT_DOMAINS = {
+    'youtube.com', 'googlevideo.com', 'ytimg.com', 'youtube-nocookie.com',
+    'ggpht.com', 'googleapis.com', 'gstatic.com', 'vimeocdn.com', 'vimeo.com',
+    'twitch.tv', 'ttvnw.net', 'jtvnw.net'
+}
+
+STREAMING_EXEMPT_EXTENSIONS = ('.m3u8', '.mpd')
+
+def _host_matches_domain_set(host, domain_set):
+    if host in domain_set:
+        return True
+    return any(host.endswith('.' + dom) for dom in domain_set)
+
 def is_ad_or_tracker(url_str):
     try:
-        url_lower = url_str.lower()
-        # Exempt YouTube / GoogleVideo streaming domains from cancellation
-        if any(dom in url_lower for dom in [
-            'youtube.com', 'googlevideo.com', 'ytimg.com', 'youtube-nocookie.com',
-            'ggpht.com', 'googleapis.com', 'gstatic.com', 'vimeocdn.com', 'vimeo.com',
-            'twitch.tv', 'ttvnw.net', 'jtvnw.net', 'hls', 'm3u8', 'mpd'
-        ]):
+        parsed = urllib.parse.urlparse(url_str)
+        host = (parsed.hostname or '').lower()
+        if not host:
+            return False
+
+        # Exempt YouTube / GoogleVideo streaming domains and manifest files from cancellation
+        if _host_matches_domain_set(host, STREAMING_EXEMPT_DOMAINS):
+            return False
+        if parsed.path.lower().endswith(STREAMING_EXEMPT_EXTENSIONS):
             return False
 
         if ADBLOCK_ENGINE is not None:
@@ -95,11 +111,6 @@ def is_ad_or_tracker(url_str):
                 return ADBLOCK_ENGINE.should_block(url_str)
             except Exception:
                 pass
-
-        parsed = urllib.parse.urlparse(url_str)
-        host = (parsed.hostname or '').lower()
-        if not host:
-            return False
 
         # Stage 1: O(1) Domain Set Pre-lookup
         if host in BLOCKED_DOMAINS:
@@ -179,6 +190,8 @@ def save_session_state(urls):
         print("Session save note:", e)
 
 # Anti-Fingerprinting Farbling Engine JS
+# Registered as a UserScript with START injection time so it patches
+# canvas/WebGL/navigator APIs before any page script can read the originals.
 FARBLING_JS = """
 (function() {
     if (window.__bharat_farbling__) return;
@@ -332,7 +345,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self):
-        self.current_version = "1.2.4"
+        self.current_version = "1.2.5"
         super().__init__(title=f"Bharat Browser v{self.current_version}")
         self.set_default_size(1280, 850)
         self.set_position(Gtk.WindowPosition.CENTER)
@@ -353,8 +366,8 @@ class BharatBrowserWindow(Gtk.Window):
                 try:
                     self.set_icon_from_file(candidate)
                     break
-                except Exception:
-                    pass
+                except Exception as e:
+                    print("Icon load note:", e)
 
         self.blocked_count = 0
         self.downloads_history = []
@@ -364,6 +377,7 @@ class BharatBrowserWindow(Gtk.Window):
         self.adblock_enabled = saved_settings.get("adblock_enabled", True)
         self.clearurls_enabled = saved_settings.get("clearurls_enabled", True)
         self.https_enabled = saved_settings.get("https_enabled", True)
+        self.dev_tools_enabled = saved_settings.get("dev_tools_enabled", False)
 
         self.apply_custom_css()
 
@@ -386,7 +400,7 @@ class BharatBrowserWindow(Gtk.Window):
 
         # WebKit Settings Optimization
         self.web_settings = WebKit2.Settings()
-        self.web_settings.set_enable_developer_extras(True)
+        self.web_settings.set_enable_developer_extras(self.dev_tools_enabled)
         self.web_settings.set_enable_webrtc(True)
         self.web_settings.set_enable_media_stream(True)
         self.web_settings.set_enable_javascript(True)
@@ -397,11 +411,6 @@ class BharatBrowserWindow(Gtk.Window):
         self.web_settings.set_media_playback_allows_inline(True)
         self.web_settings.set_media_playback_requires_user_gesture(False)
         self.web_settings.set_hardware_acceleration_policy(WebKit2.HardwareAccelerationPolicy.ALWAYS)
-        try:
-            if hasattr(self.web_settings, 'set_enable_dns_prefetching'):
-                self.web_settings.set_enable_dns_prefetching(True)
-        except Exception:
-            pass
         if hasattr(self.web_settings, 'set_enable_smooth_scrolling'):
             self.web_settings.set_enable_smooth_scrolling(True)
         self.web_settings.set_enable_html5_database(True)
@@ -432,63 +441,83 @@ class BharatBrowserWindow(Gtk.Window):
                 pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(self.icon_path, 22, 22, True)
                 brand_img = Gtk.Image.new_from_pixbuf(pixbuf)
                 brand_box.pack_start(brand_img, False, False, 0)
-            except Exception:
-                pass
+            except Exception as e:
+                print("Brand icon load note:", e)
         self.brand_label = Gtk.Label(label=f"Bharat v{self.current_version}")
         self.brand_label.get_style_context().add_class("brand-label")
         brand_box.pack_start(self.brand_label, False, False, 0)
         top_bar.pack_start(brand_box, False, False, 4)
 
-        # Nav Buttons
+        # Nav Buttons (grouped as a segmented control)
+        nav_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        nav_group.get_style_context().add_class("nav-group")
+
         self.btn_back = Gtk.Button.new_from_icon_name("go-previous-symbolic", Gtk.IconSize.BUTTON)
+        self.btn_back.get_style_context().add_class("flat-icon-btn")
         self.btn_back.set_tooltip_text("Back")
         self.btn_back.connect("clicked", self.on_back_clicked)
-        top_bar.pack_start(self.btn_back, False, False, 0)
+        nav_group.pack_start(self.btn_back, False, False, 0)
 
         self.btn_forward = Gtk.Button.new_from_icon_name("go-next-symbolic", Gtk.IconSize.BUTTON)
+        self.btn_forward.get_style_context().add_class("flat-icon-btn")
         self.btn_forward.set_tooltip_text("Forward")
         self.btn_forward.connect("clicked", self.on_forward_clicked)
-        top_bar.pack_start(self.btn_forward, False, False, 0)
+        nav_group.pack_start(self.btn_forward, False, False, 0)
 
         self.btn_reload = Gtk.Button.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.BUTTON)
+        self.btn_reload.get_style_context().add_class("flat-icon-btn")
         self.btn_reload.set_tooltip_text("Reload Page")
         self.btn_reload.connect("clicked", self.on_reload_clicked)
-        top_bar.pack_start(self.btn_reload, False, False, 0)
+        nav_group.pack_start(self.btn_reload, False, False, 0)
 
-        # URL Entry
+        top_bar.pack_start(nav_group, False, False, 0)
+
+        # URL Entry with dynamic security icon
         self.url_entry = Gtk.Entry()
+        self.url_entry.get_style_context().add_class("url-entry")
         self.url_entry.set_placeholder_text("Search Google or enter URL...")
+        self.url_entry.set_icon_from_icon_name(Gtk.EntryIconPosition.PRIMARY, "channel-insecure-symbolic")
         self.url_entry.connect("activate", self.on_url_activate)
         top_bar.pack_start(self.url_entry, True, True, 4)
 
         # New Tab Button
         self.btn_new_tab = Gtk.Button.new_from_icon_name("tab-new-symbolic", Gtk.IconSize.BUTTON)
+        self.btn_new_tab.get_style_context().add_class("flat-icon-btn")
         self.btn_new_tab.set_tooltip_text("New Tab (Ctrl+T)")
         self.btn_new_tab.connect("clicked", lambda b: self.create_new_tab("https://www.google.co.in"))
         top_bar.pack_start(self.btn_new_tab, False, False, 0)
 
-        # Action Buttons
+        # Action Buttons (grouped)
+        action_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        action_group.get_style_context().add_class("nav-group")
+
         self.btn_screenshot = Gtk.Button.new_from_icon_name("camera-photo-symbolic", Gtk.IconSize.BUTTON)
+        self.btn_screenshot.get_style_context().add_class("flat-icon-btn")
         self.btn_screenshot.set_tooltip_text("Take Webpage Screenshot")
         self.btn_screenshot.connect("clicked", self.on_screenshot_clicked)
-        top_bar.pack_start(self.btn_screenshot, False, False, 0)
+        action_group.pack_start(self.btn_screenshot, False, False, 0)
 
         self.btn_dark = Gtk.Button.new_from_icon_name("weather-clear-night-symbolic", Gtk.IconSize.BUTTON)
+        self.btn_dark.get_style_context().add_class("flat-icon-btn")
         self.btn_dark.set_tooltip_text("Toggle DarkReader Engine")
         self.btn_dark.connect("clicked", self.on_dark_clicked)
-        top_bar.pack_start(self.btn_dark, False, False, 0)
+        action_group.pack_start(self.btn_dark, False, False, 0)
 
         self.btn_downloads = Gtk.Button.new_from_icon_name("folder-download-symbolic", Gtk.IconSize.BUTTON)
+        self.btn_downloads.get_style_context().add_class("flat-icon-btn")
         self.btn_downloads.set_tooltip_text("Downloads Manager")
         self.btn_downloads.connect("clicked", self.on_downloads_clicked)
-        top_bar.pack_start(self.btn_downloads, False, False, 0)
+        action_group.pack_start(self.btn_downloads, False, False, 0)
 
-        self.btn_shield = Gtk.Button(label="🛡️ 0")
+        top_bar.pack_start(action_group, False, False, 0)
+
+        self.btn_shield = Gtk.Button(label="🛡  0")
         self.btn_shield.get_style_context().add_class("btn-shield")
         self.btn_shield.set_tooltip_text("2-Stage Ad & Anti-Fingerprint Shield Active")
         top_bar.pack_start(self.btn_shield, False, False, 0)
 
         self.btn_settings = Gtk.Button.new_from_icon_name("open-menu-symbolic", Gtk.IconSize.BUTTON)
+        self.btn_settings.get_style_context().add_class("flat-icon-btn")
         self.btn_settings.set_tooltip_text("Menu & Settings ☰")
         self.btn_settings.connect("clicked", self.on_settings_clicked)
         top_bar.pack_start(self.btn_settings, False, False, 0)
@@ -554,100 +583,152 @@ class BharatBrowserWindow(Gtk.Window):
         * {
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Cantarell", "Ubuntu", sans-serif;
         }
-        window { background-color: #030712; }
+        window { background-color: #0b0e14; }
+
         .top-bar {
-            background: linear-gradient(180deg, #0f172a 0%, #090d16 100%);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            background-color: #11151d;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            padding: 2px 0;
         }
+
         .brand-box {
-            background: rgba(15, 23, 42, 0.8);
-            border: 1px solid rgba(249, 115, 22, 0.35);
-            border-radius: 20px;
-            padding: 3px 12px;
+            background: rgba(99, 102, 241, 0.10);
+            border: 1px solid rgba(99, 102, 241, 0.28);
+            border-radius: 999px;
+            padding: 4px 12px;
         }
         .brand-label {
-            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif;
-            font-weight: 800;
-            color: #f8fafc;
-            font-size: 13px;
-            letter-spacing: -0.2px;
+            font-weight: 700;
+            color: #e2e8f0;
+            font-size: 12px;
+            letter-spacing: -0.1px;
         }
-        notebook {
-            background-color: #030712;
+
+        /* Segmented "pill" grouping for nav & action buttons */
+        .nav-group {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 999px;
+            padding: 2px;
+        }
+        .flat-icon-btn {
+            background: transparent;
+            color: #9aa4b2;
             border: none;
+            box-shadow: none;
+            border-radius: 999px;
+            padding: 6px 9px;
+            min-width: 0;
+            min-height: 0;
+            transition: background 120ms ease, color 120ms ease;
         }
+        .flat-icon-btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+            color: #f1f5f9;
+        }
+        .flat-icon-btn:active {
+            background: rgba(99, 102, 241, 0.25);
+        }
+
+        notebook { background-color: #0b0e14; border: none; }
         notebook header {
-            background-color: #090d16;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            background-color: #0b0e14;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            padding: 4px 8px 0 8px;
         }
         notebook tab {
-            background-color: rgba(15, 23, 42, 0.6);
-            color: #94a3b8;
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 8px 8px 0 0;
-            padding: 4px 10px;
+            background-color: transparent;
+            color: #7c8798;
+            border: none;
+            border-radius: 10px 10px 0 0;
+            padding: 5px 12px;
             margin-right: 2px;
+            transition: background 120ms ease, color 120ms ease;
+        }
+        notebook tab:hover {
+            background-color: rgba(255, 255, 255, 0.04);
+            color: #cbd5e1;
         }
         notebook tab:checked {
-            background-color: #1e293b;
+            background-color: #1a1f2b;
             color: #f8fafc;
-            border-color: rgba(99, 102, 241, 0.4);
+            box-shadow: inset 0 -2px 0 0 #6366f1;
         }
-        entry {
-            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
-            background-color: rgba(15, 23, 42, 0.9);
-            color: #f8fafc;
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 20px;
+
+        entry.url-entry {
+            background-color: rgba(255, 255, 255, 0.05);
+            color: #f1f5f9;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 999px;
             padding: 6px 14px;
             font-size: 13px;
+            caret-color: #818cf8;
         }
-        entry:focus {
+        entry.url-entry image { color: #6b7686; margin-right: 2px; }
+        entry.url-entry:focus {
+            background-color: rgba(255, 255, 255, 0.07);
             border-color: #6366f1;
-            box-shadow: 0 0 12px rgba(99, 102, 241, 0.3);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
         }
+        entry.url-entry selection { background-color: #6366f1; color: #ffffff; }
+
         button {
-            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
-            background: rgba(30, 41, 59, 0.6);
+            background: transparent;
             color: #cbd5e1;
             border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 18px;
-            padding: 4px 10px;
+            border-radius: 999px;
+            padding: 5px 12px;
             font-size: 12px;
             font-weight: 600;
+            transition: background 120ms ease, border-color 120ms ease;
         }
         button:hover {
-            background: rgba(51, 65, 85, 0.8);
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(255, 255, 255, 0.16);
             color: #ffffff;
-            border-color: rgba(255, 255, 255, 0.2);
         }
+
         .btn-shield {
-            background: rgba(16, 185, 129, 0.12);
+            background: rgba(52, 211, 153, 0.10);
             color: #34d399;
-            border: 1px solid rgba(16, 185, 129, 0.3);
-            border-radius: 18px;
+            border: 1px solid rgba(52, 211, 153, 0.28);
             font-weight: 700;
             font-size: 11px;
+            padding: 5px 12px;
         }
+        .btn-shield:hover {
+            background: rgba(52, 211, 153, 0.18);
+            border-color: rgba(52, 211, 153, 0.4);
+            color: #6ee7b7;
+        }
+
         statusbar {
-            background-color: #030712;
-            color: #64748b;
+            background-color: #0b0e14;
+            color: #5b6472;
             font-size: 11px;
             font-weight: 500;
             border-top: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 2px 12px;
         }
+
         .update-dialog-box {
-            background: rgba(15, 23, 42, 0.96);
+            background: #151a24;
             color: #f8fafc;
-            border: 1px solid rgba(16, 185, 129, 0.4);
+            border: 1px solid rgba(52, 211, 153, 0.35);
             border-radius: 14px;
             padding: 12px 20px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.8);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.55);
         }
         .update-icon-text { font-weight: 900; color: #10b981; font-size: 15px; }
         .update-dialog-text { font-weight: 600; color: #f8fafc; font-size: 13px; }
-        .update-close-btn { background: transparent; border: none; color: #94a3b8; }
-        .update-close-btn:hover { color: #ffffff; }
+        .update-close-btn {
+            background: transparent;
+            border: none;
+            color: #7c8798;
+            border-radius: 999px;
+            padding: 2px;
+        }
+        .update-close-btn:hover { background: rgba(255, 255, 255, 0.08); color: #ffffff; }
         """
         css_provider.load_from_data(css_data)
         Gtk.StyleContext.add_provider_for_screen(
@@ -674,6 +755,15 @@ class BharatBrowserWindow(Gtk.Window):
             None, None
         )
         ucm.add_script(media_script)
+
+        # 1b. Anti-Fingerprinting Farbling Engine (must run before page scripts)
+        farbling_script = WebKit2.UserScript(
+            FARBLING_JS,
+            WebKit2.UserContentInjectedFrames.ALL_FRAMES,
+            WebKit2.UserScriptInjectionTime.START,
+            None, None
+        )
+        ucm.add_script(farbling_script)
 
         # 2. Smart Link Prefetching UserScript
         prefetch_script = WebKit2.UserScript(
@@ -707,8 +797,8 @@ class BharatBrowserWindow(Gtk.Window):
         header_box.pack_start(close_btn, False, False, 0)
         header_box.show_all()
 
-        tab_box.__webview = webview
-        tab_box.__label = tab_label
+        tab_box._bharat_webview = webview
+        tab_box._bharat_label = tab_label
 
         page_num = self.notebook.append_page(tab_box, header_box)
         self.notebook.set_tab_reorderable(tab_box, True)
@@ -728,8 +818,8 @@ class BharatBrowserWindow(Gtk.Window):
         page_num = self.notebook.get_current_page()
         if page_num != -1:
             tab_box = self.notebook.get_nth_page(page_num)
-            if hasattr(tab_box, '__webview'):
-                return tab_box.__webview
+            if hasattr(tab_box, '_bharat_webview'):
+                return tab_box._bharat_webview
         return None
 
     def get_active_tab_box(self):
@@ -744,8 +834,20 @@ class BharatBrowserWindow(Gtk.Window):
             uri = webview.get_uri() or ""
             title = webview.get_title() or f"Bharat Browser v{self.current_version}"
             self.url_entry.set_text(uri)
+            self.update_security_icon(uri)
             self.set_title(f"{title} - Bharat Browser v{self.current_version}")
             self.statusbar.push(self.context_id, f"Ready | {uri}")
+
+    def update_security_icon(self, uri):
+        if uri.startswith("https://"):
+            self.url_entry.set_icon_from_icon_name(Gtk.EntryIconPosition.PRIMARY, "channel-secure-symbolic")
+            self.url_entry.set_icon_tooltip_text(Gtk.EntryIconPosition.PRIMARY, "Secure connection (HTTPS)")
+        elif uri.startswith("http://"):
+            self.url_entry.set_icon_from_icon_name(Gtk.EntryIconPosition.PRIMARY, "channel-insecure-symbolic")
+            self.url_entry.set_icon_tooltip_text(Gtk.EntryIconPosition.PRIMARY, "Not secure (HTTP)")
+        else:
+            self.url_entry.set_icon_from_icon_name(Gtk.EntryIconPosition.PRIMARY, "edit-find-symbolic")
+            self.url_entry.set_icon_tooltip_text(Gtk.EntryIconPosition.PRIMARY, "")
 
     def on_web_process_terminated(self, webview, reason):
         print("Web process terminated, reason:", reason)
@@ -773,38 +875,53 @@ class BharatBrowserWindow(Gtk.Window):
         return False
 
     # Download Manager Handlers
+    def get_downloads_dir(self):
+        xdg_dir = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
+        downloads_dir = xdg_dir or os.path.expanduser("~/Downloads")
+        os.makedirs(downloads_dir, exist_ok=True)
+        return downloads_dir
+
+    def unique_download_path(self, downloads_dir, filename):
+        target_path = os.path.join(downloads_dir, filename)
+        if not os.path.exists(target_path):
+            return target_path
+        base, ext = os.path.splitext(filename)
+        counter = 1
+        while True:
+            candidate = os.path.join(downloads_dir, f"{base} ({counter}){ext}")
+            if not os.path.exists(candidate):
+                return candidate
+            counter += 1
+
     def on_download_started(self, context, download):
-        desktop_dir = os.path.expanduser("~/Desktop")
-        os.makedirs(desktop_dir, exist_ok=True)
-        
+        downloads_dir = self.get_downloads_dir()
+
         filename = "downloaded_file"
         try:
             req = download.get_request()
             if req and req.get_uri():
                 filename = os.path.basename(urllib.parse.urlparse(req.get_uri()).path) or "downloaded_file"
-        except Exception:
-            pass
+        except Exception as e:
+            print("Download filename resolution note:", e)
 
-        target_path = os.path.join(desktop_dir, filename)
+        target_path = self.unique_download_path(downloads_dir, filename)
+        filename = os.path.basename(target_path)
         download.set_destination("file://" + target_path)
-        
-        self.downloads_history.append({"filename": filename, "path": target_path, "status": "Downloading..."})
-        self.statusbar.push(self.context_id, f"📥 Download Started: {filename} -> ~/Desktop")
 
-        download.connect("finished", lambda d: self.on_download_finished(filename, target_path))
-        download.connect("failed", lambda d, err: self.on_download_failed(filename, err))
+        entry = {"filename": filename, "path": target_path, "status": "Downloading..."}
+        self.downloads_history.append(entry)
+        self.statusbar.push(self.context_id, f"📥 Download Started: {filename} -> {downloads_dir}")
 
-    def on_download_finished(self, filename, target_path):
-        for item in self.downloads_history:
-            if item["filename"] == filename:
-                item["status"] = "Completed ✅"
-        self.statusbar.push(self.context_id, f"✅ Download Completed: {filename}")
+        download.connect("finished", lambda d: self.on_download_finished(entry))
+        download.connect("failed", lambda d, err: self.on_download_failed(entry, err))
 
-    def on_download_failed(self, filename, error):
-        for item in self.downloads_history:
-            if item["filename"] == filename:
-                item["status"] = "Failed ❌"
-        self.statusbar.push(self.context_id, f"❌ Download Failed: {filename}")
+    def on_download_finished(self, entry):
+        entry["status"] = "Completed ✅"
+        self.statusbar.push(self.context_id, f"✅ Download Completed: {entry['filename']}")
+
+    def on_download_failed(self, entry, error):
+        entry["status"] = "Failed ❌"
+        self.statusbar.push(self.context_id, f"❌ Download Failed: {entry['filename']} ({error})")
 
     def on_downloads_clicked(self, btn):
         dialog = Gtk.Dialog(
@@ -825,7 +942,7 @@ class BharatBrowserWindow(Gtk.Window):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         content_area.add(vbox)
 
-        lbl_header = Gtk.Label(label="📥 Recent Downloads (Saved to Desktop)")
+        lbl_header = Gtk.Label(label="📥 Recent Downloads")
         lbl_header.get_style_context().add_class("brand-label")
         vbox.pack_start(lbl_header, False, False, 0)
 
@@ -839,8 +956,8 @@ class BharatBrowserWindow(Gtk.Window):
                 hbox.pack_start(name_lbl, True, True, 0)
                 vbox.pack_start(hbox, False, False, 2)
 
-        btn_open_folder = Gtk.Button(label="📁 Open Desktop Downloads Folder")
-        btn_open_folder.connect("clicked", lambda b: os.system("xdg-open ~/Desktop &"))
+        btn_open_folder = Gtk.Button(label="📁 Open Downloads Folder")
+        btn_open_folder.connect("clicked", lambda b: subprocess.Popen(["xdg-open", self.get_downloads_dir()]))
         vbox.pack_start(btn_open_folder, False, False, 8)
 
         dialog.show_all()
@@ -968,30 +1085,30 @@ class BharatBrowserWindow(Gtk.Window):
             active_wv = self.get_active_webview()
             if active_wv == webview:
                 self.url_entry.set_text(uri)
+                self.update_security_icon(uri)
                 self.set_title(f"{title} - Bharat Browser v{self.current_version}")
                 self.statusbar.push(self.context_id, f"Ready | {uri}")
 
             # Update tab label
             for i in range(self.notebook.get_n_pages()):
                 tab_box = self.notebook.get_nth_page(i)
-                if hasattr(tab_box, '__webview') and tab_box.__webview == webview:
-                    if hasattr(tab_box, '__label'):
-                        tab_box.__label.set_text(title)
+                if hasattr(tab_box, '_bharat_webview') and tab_box._bharat_webview == webview:
+                    if hasattr(tab_box, '_bharat_label'):
+                        tab_box._bharat_label.set_text(title)
                     break
 
             # Save session state across tabs
             urls = []
             for i in range(self.notebook.get_n_pages()):
                 tb = self.notebook.get_nth_page(i)
-                if hasattr(tb, '__webview'):
-                    u = tb.__webview.get_uri()
+                if hasattr(tb, '_bharat_webview'):
+                    u = tb._bharat_webview.get_uri()
                     if u and not u.startswith("about:"):
                         urls.append(u)
             if urls:
                 save_session_state(urls)
 
             # Injections
-            self.execute_js_on_webview(webview, FARBLING_JS)
             if self.dark_mode_active:
                 self.apply_dark_reader_to_webview(webview)
 
@@ -1000,7 +1117,8 @@ class BharatBrowserWindow(Gtk.Window):
             "dark_mode": self.dark_mode_active,
             "adblock_enabled": self.adblock_enabled,
             "clearurls_enabled": self.clearurls_enabled,
-            "https_enabled": self.https_enabled
+            "https_enabled": self.https_enabled,
+            "dev_tools_enabled": self.dev_tools_enabled
         })
 
     def on_dark_clicked(self, btn):
@@ -1008,8 +1126,8 @@ class BharatBrowserWindow(Gtk.Window):
         self.save_settings()
         for i in range(self.notebook.get_n_pages()):
             tb = self.notebook.get_nth_page(i)
-            if hasattr(tb, '__webview'):
-                wv = tb.__webview
+            if hasattr(tb, '_bharat_webview'):
+                wv = tb._bharat_webview
                 if self.dark_mode_active:
                     self.apply_dark_reader_to_webview(wv)
                 else:
@@ -1028,8 +1146,8 @@ class BharatBrowserWindow(Gtk.Window):
         except Exception:
             try:
                 webview.run_javascript(js_code, None, None, None)
-            except Exception:
-                pass
+            except Exception as e:
+                print("JS execution note:", e)
 
     def apply_dark_reader_to_webview(self, webview):
         js = f"""
@@ -1137,6 +1255,11 @@ class BharatBrowserWindow(Gtk.Window):
         chk_https.connect("toggled", lambda cb: (setattr(self, 'https_enabled', cb.get_active()), self.save_settings()))
         vbox.pack_start(chk_https, False, False, 0)
 
+        chk_devtools = Gtk.CheckButton(label="🛠️ Developer Tools (Web Inspector)")
+        chk_devtools.set_active(self.dev_tools_enabled)
+        chk_devtools.connect("toggled", lambda cb: self.on_devtools_toggled(cb.get_active()))
+        vbox.pack_start(chk_devtools, False, False, 0)
+
         btn_clear = Gtk.Button(label="🗑️ Clear Browsing History & Cookies")
         btn_clear.connect("clicked", self.on_clear_cache_clicked)
         vbox.pack_start(btn_clear, False, False, 4)
@@ -1147,6 +1270,11 @@ class BharatBrowserWindow(Gtk.Window):
         dialog.show_all()
         dialog.run()
         dialog.destroy()
+
+    def on_devtools_toggled(self, active):
+        self.dev_tools_enabled = active
+        self.web_settings.set_enable_developer_extras(active)
+        self.save_settings()
 
     def on_clear_cache_clicked(self, btn):
         try:
