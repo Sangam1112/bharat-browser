@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.6 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.7 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -345,10 +345,18 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self):
-        self.current_version = "1.2.6"
+        self.current_version = "1.2.7"
         super().__init__(title=f"Bharat Browser v{self.current_version}")
         self.set_default_size(1280, 850)
         self.set_position(Gtk.WindowPosition.CENTER)
+
+        # Slim custom titlebar (replaces the OS-drawn titlebar, which reserved
+        # a large light-themed strip for the page title and ate vertical space)
+        titlebar = Gtk.HeaderBar()
+        titlebar.set_show_close_button(True)
+        titlebar.set_title("")
+        titlebar.get_style_context().add_class("bharat-titlebar")
+        self.set_titlebar(titlebar)
 
         self.icon_path = None
         icon_candidates = [
@@ -584,6 +592,20 @@ class BharatBrowserWindow(Gtk.Window):
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Cantarell", "Ubuntu", sans-serif;
         }
         window { background-color: #0b0e14; }
+
+        headerbar.bharat-titlebar {
+            background-color: #0b0e14;
+            background-image: none;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            box-shadow: none;
+            padding: 0 4px;
+            min-height: 0;
+        }
+        headerbar.bharat-titlebar button {
+            min-height: 0;
+            min-width: 0;
+            padding: 2px;
+        }
 
         .top-bar {
             background-color: #11151d;

@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.5"
+VERSION="1.2.7"
 PKG_NAME="bharat-browser"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
 
@@ -51,6 +51,9 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sat Sep 26 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.7-1
+- Replace OS-drawn titlebar with a slim custom dark titlebar (was a large light-themed strip eating vertical space)
+- Tighten top bar margins, tab padding, and status bar padding for more vertical browsing space
 * Fri Sep 25 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.5-1
 - Fix tab-lookup attribute mangling bug breaking Back/Forward/Reload/session-restore/dark-mode
 - Fix anti-fingerprinting script to inject before page scripts run
