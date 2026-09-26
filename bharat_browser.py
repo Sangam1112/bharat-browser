@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.7 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.8 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -12,6 +12,7 @@ os.environ["GST_VAAPI_ALL_DRIVERS"] = "1"
 os.environ["GST_DEBUG"] = "0"
 os.environ["WEBKIT_USE_SINGLE_WEB_PROCESS"] = "0"
 
+import ast
 import re
 import json
 import time
@@ -345,7 +346,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self):
-        self.current_version = "1.2.7"
+        self.current_version = "1.2.8"
         super().__init__(title=f"Bharat Browser v{self.current_version}")
         self.set_default_size(1280, 850)
         self.set_position(Gtk.WindowPosition.CENTER)
@@ -556,6 +557,13 @@ class BharatBrowserWindow(Gtk.Window):
         self.update_dialog_label = Gtk.Label(label=f"Bharat Browser is working on latest version (v{self.current_version})")
         self.update_dialog_label.get_style_context().add_class("update-dialog-text")
 
+        self.btn_restart_update = Gtk.Button(label="Restart Now")
+        self.btn_restart_update.get_style_context().add_class("update-restart-btn")
+        self.btn_restart_update.set_tooltip_text("Restart to apply the downloaded update")
+        self.btn_restart_update.connect("clicked", lambda b: self.restart_application())
+        self.btn_restart_update.set_no_show_all(True)
+        self.btn_restart_update.hide()
+
         btn_close_update = Gtk.Button.new_from_icon_name("window-close-symbolic", Gtk.IconSize.BUTTON)
         btn_close_update.set_tooltip_text("Close Notification")
         btn_close_update.get_style_context().add_class("update-close-btn")
@@ -563,6 +571,7 @@ class BharatBrowserWindow(Gtk.Window):
 
         self.update_dialog_box.pack_start(icon_lbl, False, False, 0)
         self.update_dialog_box.pack_start(self.update_dialog_label, False, False, 0)
+        self.update_dialog_box.pack_start(self.btn_restart_update, False, False, 0)
         self.update_dialog_box.pack_start(btn_close_update, False, False, 0)
 
         self.overlay.add_overlay(self.update_dialog_box)
@@ -745,6 +754,19 @@ class BharatBrowserWindow(Gtk.Window):
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.55);
         }
         .update-icon-text { font-weight: 900; color: #10b981; font-size: 15px; }
+        .update-restart-btn {
+            background: rgba(99, 102, 241, 0.18);
+            color: #c7d2fe;
+            border: 1px solid rgba(99, 102, 241, 0.4);
+            border-radius: 999px;
+            padding: 4px 12px;
+            font-size: 12px;
+            font-weight: 700;
+        }
+        .update-restart-btn:hover {
+            background: rgba(99, 102, 241, 0.3);
+            color: #ffffff;
+        }
         .update-dialog-text { font-weight: 600; color: #f8fafc; font-size: 13px; }
         .update-close-btn {
             background: transparent;
@@ -1006,19 +1028,55 @@ class BharatBrowserWindow(Gtk.Window):
             url = "https://raw.githubusercontent.com/Sangam1112/bharat-browser/master/package.json"
             req = urllib.request.Request(url, headers={"User-Agent": f"BharatBrowser/{self.current_version}"})
             with urllib.request.urlopen(req, timeout=6) as response:
-                if response.status == 200:
-                    data = json.loads(response.read().decode('utf-8'))
-                    remote_version = data.get("version", "").strip()
-                    if remote_version and self.compare_versions(remote_version, self.current_version) > 0:
-                        GLib.idle_add(self.show_update_notification_dialog, remote_version)
-                        return
-                    else:
-                        GLib.idle_add(self.show_latest_version_notification)
-                        return
+                if response.status != 200:
+                    GLib.idle_add(self.show_latest_version_notification)
+                    return
+                data = json.loads(response.read().decode('utf-8'))
+                remote_version = data.get("version", "").strip()
+
+            if not remote_version or self.compare_versions(remote_version, self.current_version) <= 0:
+                GLib.idle_add(self.show_latest_version_notification)
+                return
+
+            installed = self.download_and_install_update()
+            GLib.idle_add(self.show_update_notification_dialog, remote_version, installed)
         except Exception as e:
             print("Git update check note:", e)
+            GLib.idle_add(self.show_latest_version_notification)
 
-        GLib.idle_add(self.show_latest_version_notification)
+    def download_and_install_update(self):
+        """Download the latest bharat_browser.py from GitHub and replace the running
+        script in place. Only runs if the target file is writable by this user;
+        otherwise the update is left for the system package manager / manual copy."""
+        target_path = os.path.abspath(__file__)
+        if not os.access(target_path, os.W_OK):
+            print(f"Update available but {target_path} is not writable; skipping auto-install.")
+            return False
+        try:
+            src_url = "https://raw.githubusercontent.com/Sangam1112/bharat-browser/master/bharat_browser.py"
+            req = urllib.request.Request(src_url, headers={"User-Agent": f"BharatBrowser/{self.current_version}"})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                new_source = response.read()
+
+            # Reject anything that isn't at least syntactically valid Python
+            ast.parse(new_source.decode('utf-8'))
+
+            tmp_path = target_path + ".update-tmp"
+            with open(tmp_path, "wb") as f:
+                f.write(new_source)
+            os.chmod(tmp_path, 0o755)
+            os.replace(tmp_path, target_path)
+            return True
+        except Exception as e:
+            print("Auto-update install failed:", e)
+            return False
+
+    def restart_application(self):
+        try:
+            script = os.path.abspath(__file__)
+            os.execv(sys.executable, [sys.executable, script] + sys.argv[1:])
+        except Exception as e:
+            print("Restart failed:", e)
 
     def push_notification_status(self, message):
         self.statusbar.show_all()
@@ -1028,19 +1086,22 @@ class BharatBrowserWindow(Gtk.Window):
     def show_latest_version_notification(self):
         self.update_dialog_label.set_text(f"Browser is working on latest version (v{self.current_version})")
         self.update_dialog_box.show_all()
+        self.btn_restart_update.hide()
         self.push_notification_status(f"✅ Browser is working on latest version (v{self.current_version})")
         GLib.timeout_add_seconds(5, lambda: (self.update_dialog_box.hide(), False)[1])
 
-    def show_update_notification_dialog(self, version_str):
-        self.current_version = version_str
-        self.brand_label.set_text(f"Bharat v{self.current_version}")
-        webview = self.get_active_webview()
-        current_title = webview.get_title() if webview else "Bharat Browser"
-        self.set_title(f"{current_title} - Bharat Browser v{self.current_version}")
-        self.update_dialog_label.set_text(f"Browser has been updated to version {version_str}")
-        self.update_dialog_box.show_all()
-        self.push_notification_status(f"🎉 Browser has been updated to version {version_str}")
-        GLib.timeout_add_seconds(5, lambda: (self.update_dialog_box.hide(), False)[1])
+    def show_update_notification_dialog(self, version_str, installed=True):
+        if installed:
+            self.update_dialog_label.set_text(f"Downloaded update v{version_str} — click Restart Now to apply")
+            self.update_dialog_box.show_all()
+            self.btn_restart_update.show()
+            self.push_notification_status(f"🎉 Downloaded update v{version_str}. Restart to apply.")
+        else:
+            self.update_dialog_label.set_text(f"Update v{version_str} available — install via your package manager")
+            self.update_dialog_box.show_all()
+            self.btn_restart_update.hide()
+            self.push_notification_status(f"⬆️ Update v{version_str} available (auto-install needs write access)")
+            GLib.timeout_add_seconds(8, lambda: (self.update_dialog_box.hide(), False)[1])
 
     def on_resource_load_started(self, webview, resource, request):
         uri = request.get_uri()

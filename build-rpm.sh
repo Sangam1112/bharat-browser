@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.7"
+VERSION="1.2.8"
 PKG_NAME="bharat-browser"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
 
@@ -51,6 +51,10 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sat Sep 26 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.8-1
+- Add real self-updater: checks package.json on GitHub, downloads and installs
+  the latest bharat_browser.py in place when writable, with a Restart Now
+  button to apply it (falls back to a notify-only message when not writable)
 * Sat Sep 26 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.7-1
 - Replace OS-drawn titlebar with a slim custom dark titlebar (was a large light-themed strip eating vertical space)
 - Tighten top bar margins, tab padding, and status bar padding for more vertical browsing space
