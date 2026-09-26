@@ -1035,10 +1035,16 @@ class BharatBrowserWindow(Gtk.Window):
                 remote_version = data.get("version", "").strip()
 
             if not remote_version or self.compare_versions(remote_version, self.current_version) <= 0:
+                print(f"Bharat Browser is up to date (v{self.current_version}).")
                 GLib.idle_add(self.show_latest_version_notification)
                 return
 
+            print(f"Update available: v{self.current_version} -> v{remote_version}. Downloading...")
             installed = self.download_and_install_update()
+            if installed:
+                print(f"Update v{remote_version} downloaded and installed; restart to apply.")
+            else:
+                print(f"Update v{remote_version} available but not auto-installed.")
             GLib.idle_add(self.show_update_notification_dialog, remote_version, installed)
         except Exception as e:
             print("Git update check note:", e)
@@ -1066,6 +1072,7 @@ class BharatBrowserWindow(Gtk.Window):
                 f.write(new_source)
             os.chmod(tmp_path, 0o755)
             os.replace(tmp_path, target_path)
+            print(f"Installed update to {target_path}.")
             return True
         except Exception as e:
             print("Auto-update install failed:", e)
