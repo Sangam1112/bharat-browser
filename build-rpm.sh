@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.8"
+VERSION="1.2.9"
 PKG_NAME="bharat-browser"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
 
@@ -51,6 +51,25 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sat Sep 26 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.9-1
+- Security/privacy audit fixes: updater now pins to a release tag and verifies
+  a published sha256 checksum (was fetching mutable master with no integrity
+  check), and caps the download size
+- Native WKContentRuleList ad/tracker blocking added alongside the existing
+  Python-level blocking; shared, expanded tracker domain list used by both
+  the fallback path and the optional adblockparser engine (previously the
+  "advanced" path used the same tiny 11-domain list as the fallback)
+- Autoplay now requires a user gesture (was forced on for all sites)
+- WebRTC is off by default (opt-in in Settings) to avoid local-IP leaks via
+  ICE candidates; added an explicit allow/deny prompt for camera, mic,
+  location, and notification permission requests
+- HTTPS auto-upgrade now exempts LAN/private-IP hosts and bare local
+  hostnames instead of only localhost/127.0.0.1
+- Crashed tabs stop auto-reloading after repeated crashes instead of looping
+  forever
+- Added Private Browsing windows (Ctrl+Shift+N): ephemeral cookies/storage,
+  no session-file persistence
+- Extended anti-fingerprinting canvas/WebGL patch to WebGL2RenderingContext
 * Sat Sep 26 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.8-1
 - Add real self-updater: checks package.json on GitHub, downloads and installs
   the latest bharat_browser.py in place when writable, with a Restart Now

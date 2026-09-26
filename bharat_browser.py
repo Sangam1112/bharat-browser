@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.8 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.9 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -13,6 +13,8 @@ os.environ["GST_DEBUG"] = "0"
 os.environ["WEBKIT_USE_SINGLE_WEB_PROCESS"] = "0"
 
 import ast
+import hashlib
+import ipaddress
 import re
 import json
 import time
@@ -39,37 +41,50 @@ for adblock_path in [
     if os.path.exists(adblock_path):
         sys.path.insert(0, adblock_path)
         break
-try:
-    from adblockparser import AdblockRules
-    ADBLOCK_ENGINE = AdblockRules([
-        "||doubleclick.net^",
-        "||google-analytics.com^",
-        "||googlesyndication.com^",
-        "||adservice.google.com^",
-        "||facebook.net^",
-        "||scorecardresearch.com^",
-        "||adnxs.com^",
-        "||amazon-adsystem.com^",
-        "||criteo.com^",
-        "||taboola.com^",
-        "||outbrain.com^"
-    ])
-except Exception:
-    ADBLOCK_ENGINE = None
-
 # -------------------------------------------------------------------------
 # 2-Stage Request Interceptor Filter (O(1) Domain Set Pre-lookup + Regex)
 # Maintains Throughput > 25,000 requests/sec
+#
+# Single source of truth: both the adblockparser-backed engine below and the
+# plain-Python fallback path use this same list, so having the optional
+# adblockparser dependency installed no longer buys strictly identical (and
+# previously much smaller) coverage to the fallback.
 # -------------------------------------------------------------------------
 BLOCKED_DOMAINS = {
-    'doubleclick.net', 'google-analytics.com', 'googlesyndication.com',
-    'adservice.google.com', 'facebook.net', 'connect.facebook.net',
-    'scorecardresearch.com', 'adnxs.com', 'amazon-adsystem.com',
-    'criteo.com', 'taboola.com', 'outbrain.com', 'rubiconproject.com',
-    'pubmatic.com', 'casalemedia.com', 'openx.net', 'media-ad.net',
-    'adroll.com', 'quantserve.com', 'hotjar.com', 'mixpanel.com',
-    'bugsnag.com', 'sentry.io', 'clarity.ms'
+    # Ad networks / exchanges
+    'doubleclick.net', 'googlesyndication.com', 'googleadservices.com',
+    'adservice.google.com', 'adservice.google.co.in', 'google-analytics.com',
+    'googletagservices.com', 'adnxs.com',
+    'adsrvr.org', 'rubiconproject.com', 'pubmatic.com', 'casalemedia.com',
+    'openx.net', 'contextweb.com', 'media-ad.net', 'adroll.com',
+    'criteo.com', 'criteo.net', 'taboola.com', 'outbrain.com',
+    'amazon-adsystem.com', 'advertising.com', 'yieldmo.com', 'sharethrough.com',
+    'smartadserver.com', 'adform.net', 'bidswitch.net', 'indexww.com',
+    'sovrn.com', 'gumgum.com', 'medianet.com', 'mediavine.com',
+    'revcontent.com', 'mgid.com', 'moatads.com', 'adtechus.com',
+    'adcolony.com', 'applovin.com', 'unityads.unity3d.com', 'vungle.com',
+    'chartboost.com', 'inmobi.com', 'mopub.com', 'flurry.com',
+
+    # Social widget / tracking pixels
+    'facebook.net', 'connect.facebook.net', 'ads.linkedin.com',
+    'ads-twitter.com', 'analytics.twitter.com', 'static.ads-twitter.com',
+    'ct.pinterest.com', 'analytics.snapchat.com', 'analytics.tiktok.com',
+
+    # Web analytics / session replay / crash & perf telemetry
+    'scorecardresearch.com', 'quantserve.com', 'quantcount.com',
+    'hotjar.com', 'mixpanel.com', 'segment.io', 'segment.com',
+    'amplitude.com', 'fullstory.com', 'mouseflow.com', 'crazyegg.com',
+    'clicktale.net', 'clarity.ms', 'newrelic.com', 'nr-data.net',
+    'bugsnag.com', 'sentry.io', 'rollbar.com', 'appdynamics.com',
+    'chartbeat.com', 'comscore.com', 'krxd.net', 'demdex.net',
+    'omtrdc.net', 'adobedtm.com', 'branch.io', 'app-measurement.com',
 }
+
+try:
+    from adblockparser import AdblockRules
+    ADBLOCK_ENGINE = AdblockRules([f"||{domain}^" for domain in sorted(BLOCKED_DOMAINS)])
+except Exception:
+    ADBLOCK_ENGINE = None
 
 BLOCKED_REGEX = re.compile(
     r'(?:/adserver/|/ads/|/pagead/|/pixel\.gif|/tracker\.js|/telemetry|/analytics\.js|/gtm\.js|/collect\?|/log_event)',
@@ -88,6 +103,24 @@ STREAMING_EXEMPT_DOMAINS = {
 }
 
 STREAMING_EXEMPT_EXTENSIONS = ('.m3u8', '.mpd')
+
+LOCAL_HOST_SUFFIXES = ('.local', '.lan', '.home', '.internal', '.localdomain')
+
+def is_local_network_host(host):
+    """True for LAN/loopback addresses and bare local hostnames, which usually
+    only serve plain HTTP (routers, printers, IoT devices, dev servers) and have
+    no real HTTPS certificate to upgrade to."""
+    if not host:
+        return False
+    if host == "localhost" or host.endswith(LOCAL_HOST_SUFFIXES):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_private
+    except ValueError:
+        pass
+    # A bare single-label hostname (no dots) is almost always a LAN device,
+    # never a real publicly-routable, certificate-bearing FQDN.
+    return '.' not in host
 
 def _host_matches_domain_set(host, domain_set):
     if host in domain_set:
@@ -132,6 +165,24 @@ def is_ad_or_tracker(url_str):
     except Exception:
         pass
     return False
+
+def build_content_blocker_rules_json():
+    """Compile BLOCKED_DOMAINS into a WKContentRuleList (WebKit's native,
+    network-level content blocker). This runs inside the web process itself
+    instead of round-tripping every subresource through a Python callback, so
+    it's faster and isn't dependent on request-mutation semantics of the
+    resource-load-started signal working the same way across WebKitGTK
+    versions. It's additive: the existing Python-level blocking in
+    on_resource_load_started stays in place unchanged as a second layer."""
+    # WebKit's content-extension regex engine doesn't support alternation
+    # ("Disjunctions are not supported yet"), so each domain gets two plain
+    # anchored patterns instead of one pattern with a `(sep|$)` alternation.
+    rules = []
+    for domain in sorted(BLOCKED_DOMAINS):
+        prefix = f"^https?://([a-z0-9-]+\\.)*{re.escape(domain)}"
+        rules.append({"trigger": {"url-filter": prefix + "[:/]"}, "action": {"type": "block"}})
+        rules.append({"trigger": {"url-filter": prefix + "$"}, "action": {"type": "block"}})
+    return json.dumps(rules).encode("utf-8")
 
 def sanitize_url(url_str):
     if '?' not in url_str:
@@ -217,6 +268,17 @@ FARBLING_JS = """
             if (param === 37446) return "Bharat Privacy WebGL Renderer";
             return getParam.apply(this, arguments);
         };
+    } catch(e){}
+
+    try {
+        if (window.WebGL2RenderingContext) {
+            const getParam2 = WebGL2RenderingContext.prototype.getParameter;
+            WebGL2RenderingContext.prototype.getParameter = function(param) {
+                if (param === 37445) return "Generic Open-Source GPU Engine";
+                if (param === 37446) return "Bharat Privacy WebGL Renderer";
+                return getParam2.apply(this, arguments);
+            };
+        }
     } catch(e){}
 
     try {
@@ -345,9 +407,12 @@ MEDIA_POLYFILL_JS = """
 """
 
 class BharatBrowserWindow(Gtk.Window):
-    def __init__(self):
-        self.current_version = "1.2.8"
-        super().__init__(title=f"Bharat Browser v{self.current_version}")
+    def __init__(self, private=False):
+        self.current_version = "1.2.9"
+        self.is_private = private
+        title_suffix = " (Private)" if private else ""
+        super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
+        self._private_windows = []
         self.set_default_size(1280, 850)
         self.set_position(Gtk.WindowPosition.CENTER)
 
@@ -380,6 +445,7 @@ class BharatBrowserWindow(Gtk.Window):
 
         self.blocked_count = 0
         self.downloads_history = []
+        self._crash_counts = {}
 
         saved_settings = load_persistent_settings()
         self.dark_mode_active = saved_settings.get("dark_mode", False)
@@ -387,6 +453,7 @@ class BharatBrowserWindow(Gtk.Window):
         self.clearurls_enabled = saved_settings.get("clearurls_enabled", True)
         self.https_enabled = saved_settings.get("https_enabled", True)
         self.dev_tools_enabled = saved_settings.get("dev_tools_enabled", False)
+        self.webrtc_enabled = saved_settings.get("webrtc_enabled", False)
 
         self.apply_custom_css()
 
@@ -394,7 +461,12 @@ class BharatBrowserWindow(Gtk.Window):
         os.makedirs(CONFIG_DIR, exist_ok=True)
         os.makedirs(CACHE_DIR, exist_ok=True)
         
-        if hasattr(WebKit2, 'WebsiteDataManager'):
+        if self.is_private and hasattr(WebKit2.WebsiteDataManager, 'new_ephemeral'):
+            # Ephemeral manager: cookies/cache/storage live only in memory for
+            # this window's lifetime and are never written to disk.
+            self.data_mgr = WebKit2.WebsiteDataManager.new_ephemeral()
+            self.context = WebKit2.WebContext.new_with_website_data_manager(self.data_mgr)
+        elif hasattr(WebKit2, 'WebsiteDataManager'):
             self.data_mgr = WebKit2.WebsiteDataManager(
                 base_cache_directory=CACHE_DIR,
                 base_data_directory=CONFIG_DIR
@@ -410,15 +482,19 @@ class BharatBrowserWindow(Gtk.Window):
         # WebKit Settings Optimization
         self.web_settings = WebKit2.Settings()
         self.web_settings.set_enable_developer_extras(self.dev_tools_enabled)
-        self.web_settings.set_enable_webrtc(True)
-        self.web_settings.set_enable_media_stream(True)
+        # WebRTC is off by default: RTCPeerConnection can leak a machine's local
+        # (and behind some NATs, public) IP via ICE candidates even without any
+        # getUserMedia permission grant, which defeats VPN/privacy expectations.
+        # Users who need camera/mic/video-calling can opt in from Settings.
+        self.web_settings.set_enable_webrtc(self.webrtc_enabled)
+        self.web_settings.set_enable_media_stream(self.webrtc_enabled)
         self.web_settings.set_enable_javascript(True)
         self.web_settings.set_enable_media(True)
         self.web_settings.set_enable_mediasource(True)
         self.web_settings.set_enable_media_capabilities(True)
         self.web_settings.set_enable_encrypted_media(True)
         self.web_settings.set_media_playback_allows_inline(True)
-        self.web_settings.set_media_playback_requires_user_gesture(False)
+        self.web_settings.set_media_playback_requires_user_gesture(True)
         self.web_settings.set_hardware_acceleration_policy(WebKit2.HardwareAccelerationPolicy.ALWAYS)
         if hasattr(self.web_settings, 'set_enable_smooth_scrolling'):
             self.web_settings.set_enable_smooth_scrolling(True)
@@ -452,7 +528,8 @@ class BharatBrowserWindow(Gtk.Window):
                 brand_box.pack_start(brand_img, False, False, 0)
             except Exception as e:
                 print("Brand icon load note:", e)
-        self.brand_label = Gtk.Label(label=f"Bharat v{self.current_version}")
+        brand_text = f"Bharat v{self.current_version}" + (" 🕵 Private" if self.is_private else "")
+        self.brand_label = Gtk.Label(label=brand_text)
         self.brand_label.get_style_context().add_class("brand-label")
         brand_box.pack_start(self.brand_label, False, False, 0)
         top_bar.pack_start(brand_box, False, False, 4)
@@ -531,6 +608,9 @@ class BharatBrowserWindow(Gtk.Window):
         self.btn_settings.connect("clicked", self.on_settings_clicked)
         top_bar.pack_start(self.btn_settings, False, False, 0)
 
+        self.content_filter = None
+        self._compile_content_blocker_filter()
+
         # Gtk.Notebook for Multi-Tab Architecture
         self.notebook = Gtk.Notebook()
         self.notebook.set_scrollable(True)
@@ -577,13 +657,17 @@ class BharatBrowserWindow(Gtk.Window):
         self.overlay.add_overlay(self.update_dialog_box)
         self.update_dialog_box.hide()
 
-        # Restore Session or Open Initial Tab
-        saved_session = load_session_state()
-        initial_urls = saved_session.get("urls", [])
-        if isinstance(initial_urls, str):
-            initial_urls = [initial_urls]
-        if not initial_urls:
+        # Restore Session or Open Initial Tab (private windows never read or
+        # write session.json, so no private URL ever touches disk)
+        if self.is_private:
             initial_urls = ["https://www.google.co.in"]
+        else:
+            saved_session = load_session_state()
+            initial_urls = saved_session.get("urls", [])
+            if isinstance(initial_urls, str):
+                initial_urls = [initial_urls]
+            if not initial_urls:
+                initial_urls = ["https://www.google.co.in"]
 
         for url in initial_urls:
             self.create_new_tab(url)
@@ -591,8 +675,34 @@ class BharatBrowserWindow(Gtk.Window):
         # Keybindings (Ctrl+T, Ctrl+W, Ctrl+R)
         self.connect("key-press-event", self.on_key_press)
 
-        # Trigger Git Update Check after 30 sec
-        GLib.timeout_add_seconds(30, self.start_auto_git_update_check)
+        # Trigger Git Update Check after 30 sec (only the main window checks;
+        # private windows shouldn't trip network activity or restart the app)
+        if not self.is_private:
+            GLib.timeout_add_seconds(30, self.start_auto_git_update_check)
+
+    def _compile_content_blocker_filter(self):
+        try:
+            store_dir = os.path.join(CACHE_DIR, "content-filters")
+            os.makedirs(store_dir, exist_ok=True)
+            store = WebKit2.UserContentFilterStore.new(store_dir)
+            rules_bytes = build_content_blocker_rules_json()
+            store.save("bharat-adblock-v1", GLib.Bytes.new(rules_bytes), None, self._on_content_filter_saved, None)
+        except Exception as e:
+            print("Content filter compile note:", e)
+
+    def _on_content_filter_saved(self, store, result, user_data):
+        try:
+            content_filter = store.save_finish(result)
+        except Exception as e:
+            print("Content filter save note:", e)
+            return
+        self.content_filter = content_filter
+        # Apply retroactively to any tabs opened before compilation finished
+        for i in range(self.notebook.get_n_pages()):
+            tb = self.notebook.get_nth_page(i)
+            if hasattr(tb, '_bharat_webview'):
+                tb._bharat_webview.get_user_content_manager().add_filter(content_filter)
+        print("Native ad/tracker content-blocker compiled and active.")
 
     def apply_custom_css(self):
         css_provider = Gtk.CssProvider()
@@ -793,7 +903,10 @@ class BharatBrowserWindow(Gtk.Window):
 
         # Inject UserScripts
         ucm = webview.get_user_content_manager()
-        
+
+        if self.content_filter is not None:
+            ucm.add_filter(self.content_filter)
+
         # 1. Media Codec Polyfill
         media_script = WebKit2.UserScript(
             MEDIA_POLYFILL_JS,
@@ -825,6 +938,7 @@ class BharatBrowserWindow(Gtk.Window):
         webview.connect("load-changed", self.on_load_changed)
         webview.connect("resource-load-started", self.on_resource_load_started)
         webview.connect("web-process-terminated", self.on_web_process_terminated)
+        webview.connect("permission-request", self.on_permission_request)
 
         tab_box.pack_start(webview, True, True, 0)
         tab_box.show_all()
@@ -855,6 +969,8 @@ class BharatBrowserWindow(Gtk.Window):
         return webview
 
     def close_tab(self, tab_box):
+        if hasattr(tab_box, '_bharat_webview'):
+            self._crash_counts.pop(id(tab_box._bharat_webview), None)
         page_num = self.notebook.page_num(tab_box)
         if page_num != -1:
             self.notebook.remove_page(page_num)
@@ -896,17 +1012,40 @@ class BharatBrowserWindow(Gtk.Window):
             self.url_entry.set_icon_from_icon_name(Gtk.EntryIconPosition.PRIMARY, "edit-find-symbolic")
             self.url_entry.set_icon_tooltip_text(Gtk.EntryIconPosition.PRIMARY, "")
 
+    MAX_AUTO_RELOAD_CRASHES = 3
+
     def on_web_process_terminated(self, webview, reason):
-        print("Web process terminated, reason:", reason)
+        key = id(webview)
+        count = self._crash_counts.get(key, 0) + 1
+        self._crash_counts[key] = count
+        print(f"Web process terminated (reason={reason}), crash #{count} for this tab")
+
+        if count > self.MAX_AUTO_RELOAD_CRASHES:
+            self.statusbar.push(self.context_id, "⚠️ This tab crashed repeatedly and was not reloaded automatically.")
+            error_html = (
+                "<html><body style='background:#0b0e14;color:#f8fafc;"
+                "font-family:sans-serif;padding:40px;'>"
+                "<h2>This page keeps crashing</h2>"
+                "<p>Bharat Browser stopped auto-reloading it after repeated crashes. "
+                "Use the Reload button to try again manually.</p>"
+                "</body></html>"
+            )
+            GLib.idle_add(lambda: webview.load_html(error_html, None))
+            return
+
         uri = webview.get_uri() or "https://www.google.co.in"
         GLib.idle_add(lambda: webview.load_uri(uri))
         self.statusbar.push(self.context_id, "⚠️ Web process recovered automatically.")
 
     def on_key_press(self, widget, event):
-        state = event.state & Gdk.ModifierType.CONTROL_MASK
-        if state:
+        ctrl = event.state & Gdk.ModifierType.CONTROL_MASK
+        shift = event.state & Gdk.ModifierType.SHIFT_MASK
+        if ctrl:
             keyval = event.keyval
-            if keyval in (Gdk.KEY_t, Gdk.KEY_T):
+            if shift and keyval in (Gdk.KEY_n, Gdk.KEY_N):
+                self.open_private_window()
+                return True
+            elif keyval in (Gdk.KEY_t, Gdk.KEY_T):
                 self.create_new_tab("https://www.google.co.in")
                 return True
             elif keyval in (Gdk.KEY_w, Gdk.KEY_W):
@@ -920,6 +1059,13 @@ class BharatBrowserWindow(Gtk.Window):
                     webview.reload()
                 return True
         return False
+
+    def open_private_window(self):
+        win = BharatBrowserWindow(private=True)
+        self._private_windows.append(win)
+        win.connect("destroy", lambda w: self._private_windows.remove(win) if win in self._private_windows else None)
+        win.show_all()
+        return win
 
     # Download Manager Handlers
     def get_downloads_dir(self):
@@ -1031,8 +1177,9 @@ class BharatBrowserWindow(Gtk.Window):
                 if response.status != 200:
                     GLib.idle_add(self.show_latest_version_notification)
                     return
-                data = json.loads(response.read().decode('utf-8'))
+                data = json.loads(response.read(1 << 20).decode('utf-8'))
                 remote_version = data.get("version", "").strip()
+                remote_sha256 = data.get("sha256", "").strip().lower()
 
             if not remote_version or self.compare_versions(remote_version, self.current_version) <= 0:
                 print(f"Bharat Browser is up to date (v{self.current_version}).")
@@ -1040,7 +1187,7 @@ class BharatBrowserWindow(Gtk.Window):
                 return
 
             print(f"Update available: v{self.current_version} -> v{remote_version}. Downloading...")
-            installed = self.download_and_install_update()
+            installed = self.download_and_install_update(remote_version, remote_sha256)
             if installed:
                 print(f"Update v{remote_version} downloaded and installed; restart to apply.")
             else:
@@ -1050,19 +1197,35 @@ class BharatBrowserWindow(Gtk.Window):
             print("Git update check note:", e)
             GLib.idle_add(self.show_latest_version_notification)
 
-    def download_and_install_update(self):
-        """Download the latest bharat_browser.py from GitHub and replace the running
-        script in place. Only runs if the target file is writable by this user;
-        otherwise the update is left for the system package manager / manual copy."""
+    MAX_UPDATE_SOURCE_BYTES = 5 * 1024 * 1024  # sanity cap; the script is ~60KB today
+
+    def download_and_install_update(self, remote_version, remote_sha256=""):
+        """Download bharat_browser.py for the announced release tag and replace the
+        running script in place. Only runs if the target file is writable by this
+        user; otherwise the update is left for the system package manager / manual
+        copy. Fetches from an immutable tag (not the mutable 'master' branch) and,
+        when package.json publishes a "sha256" field for the release, verifies the
+        downloaded bytes against it before installing anything."""
         target_path = os.path.abspath(__file__)
         if not os.access(target_path, os.W_OK):
             print(f"Update available but {target_path} is not writable; skipping auto-install.")
             return False
         try:
-            src_url = "https://raw.githubusercontent.com/Sangam1112/bharat-browser/master/bharat_browser.py"
+            src_url = f"https://raw.githubusercontent.com/Sangam1112/bharat-browser/v{remote_version}/bharat_browser.py"
             req = urllib.request.Request(src_url, headers={"User-Agent": f"BharatBrowser/{self.current_version}"})
             with urllib.request.urlopen(req, timeout=10) as response:
-                new_source = response.read()
+                new_source = response.read(self.MAX_UPDATE_SOURCE_BYTES + 1)
+            if len(new_source) > self.MAX_UPDATE_SOURCE_BYTES:
+                print("Auto-update install failed: release payload exceeded the expected size, aborting.")
+                return False
+
+            if remote_sha256:
+                digest = hashlib.sha256(new_source).hexdigest()
+                if digest != remote_sha256:
+                    print(f"Auto-update install failed: checksum mismatch (expected {remote_sha256}, got {digest}).")
+                    return False
+            else:
+                print("Auto-update note: release did not publish a sha256 checksum; installing on tag pin + syntax check only.")
 
             # Reject anything that isn't at least syntactically valid Python
             ast.parse(new_source.decode('utf-8'))
@@ -1115,10 +1278,12 @@ class BharatBrowserWindow(Gtk.Window):
         if not uri:
             return
 
-        if self.https_enabled and uri.startswith("http://") and "localhost" not in uri and "127.0.0.1" not in uri:
-            new_uri = uri.replace("http://", "https://")
-            request.set_uri(new_uri)
-            uri = new_uri
+        if self.https_enabled and uri.startswith("http://"):
+            host = (urllib.parse.urlparse(uri).hostname or '').lower()
+            if not is_local_network_host(host):
+                new_uri = uri.replace("http://", "https://", 1)
+                request.set_uri(new_uri)
+                uri = new_uri
 
         if self.clearurls_enabled:
             sanitized = sanitize_url(uri)
@@ -1172,6 +1337,7 @@ class BharatBrowserWindow(Gtk.Window):
         if load_event == WebKit2.LoadEvent.STARTED:
             self.statusbar.push(self.context_id, "Loading webpage...")
         elif load_event == WebKit2.LoadEvent.FINISHED:
+            self._crash_counts.pop(id(webview), None)
             uri = webview.get_uri() or ""
             title = webview.get_title() or "New Tab"
             
@@ -1190,16 +1356,17 @@ class BharatBrowserWindow(Gtk.Window):
                         tab_box._bharat_label.set_text(title)
                     break
 
-            # Save session state across tabs
-            urls = []
-            for i in range(self.notebook.get_n_pages()):
-                tb = self.notebook.get_nth_page(i)
-                if hasattr(tb, '_bharat_webview'):
-                    u = tb._bharat_webview.get_uri()
-                    if u and not u.startswith("about:"):
-                        urls.append(u)
-            if urls:
-                save_session_state(urls)
+            # Save session state across tabs (skipped for private windows)
+            if not self.is_private:
+                urls = []
+                for i in range(self.notebook.get_n_pages()):
+                    tb = self.notebook.get_nth_page(i)
+                    if hasattr(tb, '_bharat_webview'):
+                        u = tb._bharat_webview.get_uri()
+                        if u and not u.startswith("about:"):
+                            urls.append(u)
+                if urls:
+                    save_session_state(urls)
 
             # Injections
             if self.dark_mode_active:
@@ -1211,7 +1378,8 @@ class BharatBrowserWindow(Gtk.Window):
             "adblock_enabled": self.adblock_enabled,
             "clearurls_enabled": self.clearurls_enabled,
             "https_enabled": self.https_enabled,
-            "dev_tools_enabled": self.dev_tools_enabled
+            "dev_tools_enabled": self.dev_tools_enabled,
+            "webrtc_enabled": self.webrtc_enabled
         })
 
     def on_dark_clicked(self, btn):
@@ -1348,6 +1516,11 @@ class BharatBrowserWindow(Gtk.Window):
         chk_https.connect("toggled", lambda cb: (setattr(self, 'https_enabled', cb.get_active()), self.save_settings()))
         vbox.pack_start(chk_https, False, False, 0)
 
+        chk_webrtc = Gtk.CheckButton(label="🎥 WebRTC / Camera & Mic (off by default — can leak local IP)")
+        chk_webrtc.set_active(self.webrtc_enabled)
+        chk_webrtc.connect("toggled", lambda cb: self.on_webrtc_toggled(cb.get_active()))
+        vbox.pack_start(chk_webrtc, False, False, 0)
+
         chk_devtools = Gtk.CheckButton(label="🛠️ Developer Tools (Web Inspector)")
         chk_devtools.set_active(self.dev_tools_enabled)
         chk_devtools.connect("toggled", lambda cb: self.on_devtools_toggled(cb.get_active()))
@@ -1356,6 +1529,10 @@ class BharatBrowserWindow(Gtk.Window):
         btn_clear = Gtk.Button(label="🗑️ Clear Browsing History & Cookies")
         btn_clear.connect("clicked", self.on_clear_cache_clicked)
         vbox.pack_start(btn_clear, False, False, 4)
+
+        btn_private = Gtk.Button(label="🕵 New Private Window (Ctrl+Shift+N)")
+        btn_private.connect("clicked", lambda b: (self.open_private_window(), dialog.destroy()))
+        vbox.pack_start(btn_private, False, False, 4)
 
         about_lbl = Gtk.Label(label=f"Bharat Browser v{self.current_version} | Engineered in INDIA 🇮🇳")
         vbox.pack_start(about_lbl, False, False, 8)
@@ -1368,6 +1545,42 @@ class BharatBrowserWindow(Gtk.Window):
         self.dev_tools_enabled = active
         self.web_settings.set_enable_developer_extras(active)
         self.save_settings()
+
+    def on_webrtc_toggled(self, active):
+        self.webrtc_enabled = active
+        self.web_settings.set_enable_webrtc(active)
+        self.web_settings.set_enable_media_stream(active)
+        self.save_settings()
+
+    def on_permission_request(self, webview, request):
+        uri = webview.get_uri() or "This site"
+        kind_labels = {
+            WebKit2.UserMediaPermissionRequest: "camera/microphone access",
+            WebKit2.GeolocationPermissionRequest: "your location",
+            WebKit2.NotificationPermissionRequest: "notifications",
+        }
+        kind = "a permission"
+        for cls, label in kind_labels.items():
+            if isinstance(request, cls):
+                kind = label
+                break
+
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            destroy_with_parent=True,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text=f"Allow {kind}?"
+        )
+        dialog.format_secondary_text(uri)
+        response = dialog.run()
+        dialog.destroy()
+        if response == Gtk.ResponseType.YES:
+            request.allow()
+        else:
+            request.deny()
+        return True
 
     def on_clear_cache_clicked(self, btn):
         try:
