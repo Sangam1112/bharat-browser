@@ -47,10 +47,13 @@ cat << 'EOF' > /tmp/bharat-browser-launcher
 SCRIPT_PATH="$(readlink -f "$0")"
 BIN_DIR="$(dirname "$SCRIPT_PATH")"
 
-if [ -f "/usr/share/bharat-browser/bharat_browser.py" ]; then
-    exec python3 /usr/share/bharat-browser/bharat_browser.py "$@"
-elif [ -f "${HOME}/.local/share/bharat-browser/bharat_browser.py" ]; then
+# User-writable install checked first: it's the only copy the browser's
+# self-updater can actually rewrite in place. A root-owned /usr/share install
+# is left as a fallback for systems that only have the RPM installed.
+if [ -f "${HOME}/.local/share/bharat-browser/bharat_browser.py" ]; then
     exec python3 "${HOME}/.local/share/bharat-browser/bharat_browser.py" "$@"
+elif [ -f "/usr/share/bharat-browser/bharat_browser.py" ]; then
+    exec python3 /usr/share/bharat-browser/bharat_browser.py "$@"
 else
     exec python3 bharat_browser.py "$@"
 fi
