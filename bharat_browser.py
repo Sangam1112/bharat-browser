@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.9 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.10 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -402,13 +402,21 @@ MEDIA_POLYFILL_JS = """
     } else {
         optimizeVideoElements();
     }
-    setInterval(optimizeVideoElements, 1500);
+
+    // Event-driven instead of a 1500ms poll loop running forever in every
+    // open tab: react only when the DOM actually changes (new <video> added
+    // by the page's own JS/SPA routing), which is the only time there's
+    // new work to do anyway.
+    try {
+        const observer = new MutationObserver(optimizeVideoElements);
+        observer.observe(document.documentElement || document, { childList: true, subtree: true });
+    } catch(e){}
 })();
 """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.9"
+        self.current_version = "1.2.10"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -495,6 +503,11 @@ class BharatBrowserWindow(Gtk.Window):
         self.web_settings.set_enable_encrypted_media(True)
         self.web_settings.set_media_playback_allows_inline(True)
         self.web_settings.set_media_playback_requires_user_gesture(True)
+        # NOTE: WEBKIT_HARDWARE_ACCELERATION_POLICY_ON_DEMAND was tried here to
+        # avoid paying for a GPU-composited layer tree on tabs that don't need
+        # one, but current WebKitGTK (2.4x+) has deprecated it and treats it as
+        # identical to ALWAYS (logs a warning and changes nothing), so there's
+        # no real per-tab saving available at this settings layer today.
         self.web_settings.set_hardware_acceleration_policy(WebKit2.HardwareAccelerationPolicy.ALWAYS)
         if hasattr(self.web_settings, 'set_enable_smooth_scrolling'):
             self.web_settings.set_enable_smooth_scrolling(True)
@@ -611,6 +624,29 @@ class BharatBrowserWindow(Gtk.Window):
         self.content_filter = None
         self._compile_content_blocker_filter()
 
+        # UserScript objects are immutable once built (same as UserContentFilter
+        # above), so build each one exactly once and hand the same instance to
+        # every tab's UserContentManager instead of re-parsing/re-allocating 3
+        # fresh WebKit2.UserScript objects on every single new tab.
+        self.media_script = WebKit2.UserScript(
+            MEDIA_POLYFILL_JS,
+            WebKit2.UserContentInjectedFrames.ALL_FRAMES,
+            WebKit2.UserScriptInjectionTime.START,
+            None, None
+        )
+        self.farbling_script = WebKit2.UserScript(
+            FARBLING_JS,
+            WebKit2.UserContentInjectedFrames.ALL_FRAMES,
+            WebKit2.UserScriptInjectionTime.START,
+            None, None
+        )
+        self.prefetch_script = WebKit2.UserScript(
+            PREFETCH_USER_SCRIPT,
+            WebKit2.UserContentInjectedFrames.ALL_FRAMES,
+            WebKit2.UserScriptInjectionTime.END,
+            None, None
+        )
+
         # Gtk.Notebook for Multi-Tab Architecture
         self.notebook = Gtk.Notebook()
         self.notebook.set_scrollable(True)
@@ -679,6 +715,21 @@ class BharatBrowserWindow(Gtk.Window):
         # private windows shouldn't trip network activity or restart the app)
         if not self.is_private:
             GLib.timeout_add_seconds(30, self.start_auto_git_update_check)
+
+        # React to system memory pressure by trimming WebKit's caches, instead
+        # of only ever growing them for the lifetime of the process.
+        try:
+            self._memory_monitor = Gio.MemoryMonitor.dup_default()
+            self._memory_monitor.connect("low-memory-warning", self.on_low_memory_warning)
+        except Exception as e:
+            print("Memory monitor note:", e)
+
+    def on_low_memory_warning(self, monitor, level):
+        print(f"Low-memory warning (level={level}), trimming caches.")
+        try:
+            self.context.clear_cache()
+        except Exception as e:
+            print("Cache trim note:", e)
 
     def _compile_content_blocker_filter(self):
         try:
@@ -907,32 +958,11 @@ class BharatBrowserWindow(Gtk.Window):
         if self.content_filter is not None:
             ucm.add_filter(self.content_filter)
 
-        # 1. Media Codec Polyfill
-        media_script = WebKit2.UserScript(
-            MEDIA_POLYFILL_JS,
-            WebKit2.UserContentInjectedFrames.ALL_FRAMES,
-            WebKit2.UserScriptInjectionTime.START,
-            None, None
-        )
-        ucm.add_script(media_script)
-
-        # 1b. Anti-Fingerprinting Farbling Engine (must run before page scripts)
-        farbling_script = WebKit2.UserScript(
-            FARBLING_JS,
-            WebKit2.UserContentInjectedFrames.ALL_FRAMES,
-            WebKit2.UserScriptInjectionTime.START,
-            None, None
-        )
-        ucm.add_script(farbling_script)
-
-        # 2. Smart Link Prefetching UserScript
-        prefetch_script = WebKit2.UserScript(
-            PREFETCH_USER_SCRIPT,
-            WebKit2.UserContentInjectedFrames.ALL_FRAMES,
-            WebKit2.UserScriptInjectionTime.END,
-            None, None
-        )
-        ucm.add_script(prefetch_script)
+        # 1. Media Codec Polyfill, 1b. Anti-Fingerprinting Farbling Engine,
+        # 2. Smart Link Prefetching — shared, pre-built instances (see __init__)
+        ucm.add_script(self.media_script)
+        ucm.add_script(self.farbling_script)
+        ucm.add_script(self.prefetch_script)
 
         # Signals
         webview.connect("load-changed", self.on_load_changed)

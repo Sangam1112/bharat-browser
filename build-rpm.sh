@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.9"
+VERSION="1.2.10"
 PKG_NAME="bharat-browser"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
 
@@ -51,6 +51,17 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sat Sep 26 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.10-1
+- Performance/memory tuning: media-polyfill's per-tab 1500ms DOM poll loop
+  replaced with a MutationObserver (removes a permanent per-tab CPU wakeup)
+- The three injected UserScripts (media polyfill, anti-fingerprinting,
+  prefetch) are now built once and shared across all tabs instead of being
+  re-allocated on every single new tab
+- React to OS low-memory-warning signals by trimming WebKit's cache instead
+  of only ever growing it for the process lifetime
+- Tried WEBKIT_HARDWARE_ACCELERATION_POLICY_ON_DEMAND for per-tab GPU memory
+  savings; reverted after testing showed current WebKitGTK treats it as
+  deprecated and identical to ALWAYS (logged a warning, changed nothing)
 * Sat Sep 26 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.9-1
 - Security/privacy audit fixes: updater now pins to a release tag and verifies
   a published sha256 checksum (was fetching mutable master with no integrity
