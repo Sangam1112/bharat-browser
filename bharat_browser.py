@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.5 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.6 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -345,7 +345,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self):
-        self.current_version = "1.2.5"
+        self.current_version = "1.2.6"
         super().__init__(title=f"Bharat Browser v{self.current_version}")
         self.set_default_size(1280, 850)
         self.set_position(Gtk.WindowPosition.CENTER)
@@ -429,8 +429,8 @@ class BharatBrowserWindow(Gtk.Window):
         top_bar.get_style_context().add_class("top-bar")
         top_bar.set_margin_start(10)
         top_bar.set_margin_end(10)
-        top_bar.set_margin_top(6)
-        top_bar.set_margin_bottom(6)
+        top_bar.set_margin_top(3)
+        top_bar.set_margin_bottom(3)
         main_vbox.pack_start(top_bar, False, False, 0)
 
         # Brand Badge
@@ -588,7 +588,7 @@ class BharatBrowserWindow(Gtk.Window):
         .top-bar {
             background-color: #11151d;
             border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-            padding: 2px 0;
+            padding: 0px 0;
         }
 
         .brand-box {
@@ -617,7 +617,7 @@ class BharatBrowserWindow(Gtk.Window):
             border: none;
             box-shadow: none;
             border-radius: 999px;
-            padding: 6px 9px;
+            padding: 4px 9px;
             min-width: 0;
             min-height: 0;
             transition: background 120ms ease, color 120ms ease;
@@ -634,15 +634,17 @@ class BharatBrowserWindow(Gtk.Window):
         notebook header {
             background-color: #0b0e14;
             border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-            padding: 4px 8px 0 8px;
+            padding: 1px 8px 0 8px;
+            min-height: 0;
         }
         notebook tab {
             background-color: transparent;
             color: #7c8798;
             border: none;
             border-radius: 10px 10px 0 0;
-            padding: 5px 12px;
+            padding: 2px 12px;
             margin-right: 2px;
+            min-height: 0;
             transition: background 120ms ease, color 120ms ease;
         }
         notebook tab:hover {
@@ -705,10 +707,11 @@ class BharatBrowserWindow(Gtk.Window):
         statusbar {
             background-color: #0b0e14;
             color: #5b6472;
-            font-size: 11px;
+            font-size: 10px;
             font-weight: 500;
             border-top: 1px solid rgba(255, 255, 255, 0.05);
-            padding: 2px 12px;
+            padding: 0px 12px;
+            min-height: 0;
         }
 
         .update-dialog-box {
