@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.33"
+VERSION="1.2.34"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,21 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.34-1
+- Fix History Dashboard/autocomplete entries getting permanently stuck on
+  a URL-filename fallback instead of the real page title for most
+  first-time visits (get_title() is still empty at the exact moment the
+  entry is first recorded; now self-corrects once the real title arrives,
+  same as the tab label already did)
+- Fix closing the main window silently destroying every open Private
+  window mid-session with no warning; the app now only quits once every
+  open window (main + private) has actually closed
+- Fix "Restart Now" (after an update) silently dropping the active tab's
+  in-progress browsing-time stats instead of saving them first
+- Harden the History Dashboard's row-click navigation against a fragile
+  inline onclick + string-interpolation pattern (was HTML-attribute-safe
+  via GLib.markup_escape_text, but not JS-string-safe); now uses a
+  data-url attribute plus a delegated listener instead
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.33-1
 - Fix two real CPU/performance issues in the per-tab injected scripts,
   investigated after a user reported memory/system-overload issues on

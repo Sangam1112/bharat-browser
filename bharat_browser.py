@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.33 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.34 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -205,6 +205,13 @@ def sanitize_url(url_str):
         return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
     except Exception:
         return url_str
+
+# Tracks how many top-level BharatBrowserWindow instances (the main window
+# plus any private windows, which are siblings, not children, of it) are
+# still open, so Gtk.main_quit() only fires once the last one closes instead
+# of whenever the main window happens to close first and silently tearing
+# down every open private window mid-session with no warning.
+_LIVE_WINDOW_COUNT = 0
 
 CONFIG_DIR = os.path.expanduser("~/.config/bharat-browser")
 CACHE_DIR = os.path.expanduser("~/.cache/bharat-browser")
@@ -516,11 +523,13 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.33"
+        self.current_version = "1.2.34"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
         self._private_windows = []
+        global _LIVE_WINDOW_COUNT
+        _LIVE_WINDOW_COUNT += 1
         self.set_default_size(1280, 850)
         self.set_position(Gtk.WindowPosition.CENTER)
 
@@ -1329,6 +1338,11 @@ class BharatBrowserWindow(Gtk.Window):
             if hasattr(tab_box, '_bharat_webview'):
                 self._flush_page_view(tab_box._bharat_webview)
 
+        global _LIVE_WINDOW_COUNT
+        _LIVE_WINDOW_COUNT -= 1
+        if _LIVE_WINDOW_COUNT <= 0:
+            Gtk.main_quit()
+
     def close_tab(self, tab_box):
         if hasattr(tab_box, '_bharat_webview'):
             self._crash_counts.pop(id(tab_box._bharat_webview), None)
@@ -1849,6 +1863,13 @@ class BharatBrowserWindow(Gtk.Window):
             return False
 
     def restart_application(self):
+        # os.execv replaces the process image directly — no "destroy" signal
+        # fires, so the active tab's in-progress time-on-page would
+        # otherwise never reach the History Dashboard for this session.
+        for i in range(self.notebook.get_n_pages()):
+            tab_box = self.notebook.get_nth_page(i)
+            if hasattr(tab_box, '_bharat_webview'):
+                self._flush_page_view(tab_box._bharat_webview)
         try:
             script = os.path.abspath(__file__)
             os.execv(sys.executable, [sys.executable, script] + sys.argv[1:])
@@ -2039,7 +2060,7 @@ class BharatBrowserWindow(Gtk.Window):
                 if last_visited else "—"
             )
             rows_html += f"""
-            <tr onclick="window.location.href='{GLib.markup_escape_text(url)}'">
+            <tr data-url="{GLib.markup_escape_text(url)}">
                 <td class="title-cell">
                     <div class="title">{GLib.markup_escape_text(title)}</div>
                     <div class="domain">{GLib.markup_escape_text(domain)}</div>
@@ -2089,6 +2110,18 @@ class BharatBrowserWindow(Gtk.Window):
         <thead><tr><th>Site</th><th style="text-align:right">Time Spent</th><th style="text-align:right">Visits</th><th style="text-align:right">Last Visited</th></tr></thead>
         <tbody>{rows_html}</tbody>
     </table>
+    <script>
+        // Delegated listener reading dataset.url (the raw attribute value,
+        // not JS source) instead of an inline onclick="...'{{url}}'..." —
+        // avoids ever needing to escape a URL for a JS string-literal
+        // context (GLib.markup_escape_text() above only guarantees safe
+        // HTML-attribute escaping, not JS-string escaping).
+        document.querySelectorAll('tr[data-url]').forEach(function(row) {{
+            row.addEventListener('click', function() {{
+                window.location.href = row.dataset.url;
+            }});
+        }});
+    </script>
 </body></html>"""
 
     def open_history_tab(self):
@@ -2136,6 +2169,30 @@ class BharatBrowserWindow(Gtk.Window):
                 break
         if self.get_active_webview() == webview:
             self.set_title(f"{title} - Bharat Browser v{self.current_version}")
+        self._update_history_title(webview, title)
+
+    def _update_history_title(self, webview, title):
+        """record_history_entry() runs at LoadEvent.FINISHED, when the real
+        <title> often isn't known yet (see _resolve_display_title), so the
+        history/autocomplete entry can get stuck on the URL-filename
+        fallback forever. Called from _apply_display_title too, so once the
+        real title does arrive via notify::title, the stored entry gets
+        corrected the same way the tab label and window title already do."""
+        if self.is_private:
+            return
+        uri = webview.get_uri() or ""
+        if not uri or uri.startswith("about:"):
+            return
+        for entry in self.url_history:
+            if entry.get("url") == uri:
+                if entry.get("title") != title:
+                    entry["title"] = title
+                    save_url_history(self.url_history)
+                    for row in self.url_completion_store:
+                        if row[0] == uri:
+                            row[1] = title
+                            break
+                break
 
     def on_webview_title_notify(self, webview, pspec):
         self._apply_display_title(webview)
@@ -2586,7 +2643,9 @@ class BharatBrowserWindow(Gtk.Window):
 
 def main():
     app = BharatBrowserWindow()
-    app.connect("destroy", Gtk.main_quit)
+    # Quitting is handled by on_window_destroy() (connected in __init__),
+    # which only calls Gtk.main_quit() once every open top-level window
+    # (main + any private windows) has actually closed.
     app.show_all()
     Gtk.main()
 
