@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.20 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.21 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -209,6 +209,8 @@ CONFIG_DIR = os.path.expanduser("~/.config/bharat-browser")
 CACHE_DIR = os.path.expanduser("~/.cache/bharat-browser")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "settings.json")
 SESSION_FILE = os.path.join(CONFIG_DIR, "session.json")
+HISTORY_FILE = os.path.join(CONFIG_DIR, "history.json")
+HISTORY_MAX_ENTRIES = 500
 
 SEARCH_ENGINES = {
     "Google": "https://www.google.com/search?q={query}",
@@ -284,6 +286,28 @@ def save_session_state(urls):
         os.replace(temp_file, SESSION_FILE)
     except Exception as e:
         print("Session save note:", e)
+
+def load_url_history():
+    """Returns a list of {"url":..., "title":...} dicts, most-recent first.
+    Never called for private windows, matching the session-state pattern."""
+    try:
+        if os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+    except Exception as e:
+        print("History load note:", e)
+    return []
+
+def save_url_history(entries):
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        temp_file = HISTORY_FILE + ".tmp"
+        _write_json_private(temp_file, entries)
+        os.replace(temp_file, HISTORY_FILE)
+    except Exception as e:
+        print("History save note:", e)
 
 # Anti-Fingerprinting Farbling Engine JS
 # Registered as a UserScript with START injection time so it patches
@@ -460,7 +484,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.20"
+        self.current_version = "1.2.21"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -511,6 +535,10 @@ class BharatBrowserWindow(Gtk.Window):
             self.search_engine = DEFAULT_SEARCH_ENGINE
         self.homepage = sanitize_homepage_url(saved_settings.get("homepage", DEFAULT_HOMEPAGE))
         self.open_homepage_on_startup = saved_settings.get("open_homepage_on_startup", False)
+
+        # URL-bar autocomplete history. Never loaded/written for private
+        # windows, matching the session-state privacy guarantee.
+        self.url_history = [] if self.is_private else load_url_history()
 
         self.apply_custom_css()
 
@@ -627,6 +655,24 @@ class BharatBrowserWindow(Gtk.Window):
         self.url_entry.set_icon_from_icon_name(Gtk.EntryIconPosition.PRIMARY, "channel-insecure-symbolic")
         self.url_entry.connect("activate", self.on_url_activate)
         top_bar.pack_start(self.url_entry, True, True, 4)
+
+        # Autocomplete from browsing history (url, title)
+        self.url_completion_store = Gtk.ListStore(str, str)
+        for entry in self.url_history:
+            self.url_completion_store.append([entry.get("url", ""), entry.get("title", "")])
+        completion = Gtk.EntryCompletion()
+        completion.set_model(self.url_completion_store)
+        completion.set_text_column(0)
+        completion.set_minimum_key_length(1)
+        completion.set_popup_completion(True)
+        completion.set_inline_completion(False)
+        completion.set_match_func(self._url_completion_match, None)
+        title_cell = Gtk.CellRendererText()
+        completion.pack_start(title_cell, False)
+        completion.add_attribute(title_cell, "text", 1)
+        title_cell.set_property("scale", 0.85)
+        completion.connect("match-selected", self._on_completion_match_selected)
+        self.url_entry.set_completion(completion)
 
         # New Tab Button
         self.btn_new_tab = Gtk.Button.new_from_icon_name("tab-new-symbolic", Gtk.IconSize.BUTTON)
@@ -753,6 +799,50 @@ class BharatBrowserWindow(Gtk.Window):
         self.zoom_indicator.hide()
         self.overlay.add_overlay(self.zoom_indicator)
         self._zoom_indicator_hide_source = None
+
+        # Find-in-Page Bar Overlay — Ctrl+F to open, Escape to close.
+        self.find_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.find_bar.get_style_context().add_class("find-bar")
+        self.find_bar.set_halign(Gtk.Align.END)
+        self.find_bar.set_valign(Gtk.Align.START)
+        self.find_bar.set_margin_end(16)
+        self.find_bar.set_margin_top(8)
+
+        self.find_entry = Gtk.SearchEntry()
+        self.find_entry.set_placeholder_text("Find in page...")
+        self.find_entry.set_width_chars(24)
+        self.find_entry.connect("search-changed", self.on_find_text_changed)
+        self.find_entry.connect("activate", lambda e: self.find_next())
+        self.find_entry.connect("key-press-event", self.on_find_entry_key_press)
+        self.find_bar.pack_start(self.find_entry, False, False, 0)
+
+        self.find_match_label = Gtk.Label(label="")
+        self.find_match_label.get_style_context().add_class("find-match-label")
+        self.find_bar.pack_start(self.find_match_label, False, False, 0)
+
+        btn_find_prev = Gtk.Button.new_from_icon_name("go-up-symbolic", Gtk.IconSize.BUTTON)
+        btn_find_prev.set_tooltip_text("Previous match (Shift+Enter)")
+        btn_find_prev.connect("clicked", lambda b: self.find_previous())
+        self.find_bar.pack_start(btn_find_prev, False, False, 0)
+
+        btn_find_next = Gtk.Button.new_from_icon_name("go-down-symbolic", Gtk.IconSize.BUTTON)
+        btn_find_next.set_tooltip_text("Next match (Enter)")
+        btn_find_next.connect("clicked", lambda b: self.find_next())
+        self.find_bar.pack_start(btn_find_next, False, False, 0)
+
+        btn_find_close = Gtk.Button.new_from_icon_name("window-close-symbolic", Gtk.IconSize.BUTTON)
+        btn_find_close.set_tooltip_text("Close (Esc)")
+        btn_find_close.connect("clicked", lambda b: self.close_find_bar())
+        self.find_bar.pack_start(btn_find_close, False, False, 0)
+
+        # Show children once now, then set no_show_all so the later top-level
+        # app.show_all() in main() doesn't flash this open at every launch;
+        # opening it later uses plain show() (not show_all()), which reveals
+        # the container without needing to re-show already-visible children.
+        self.find_bar.show_all()
+        self.find_bar.set_no_show_all(True)
+        self.find_bar.hide()
+        self.overlay.add_overlay(self.find_bar)
 
         # Restore Session or Open Initial Tab (private windows never read or
         # write session.json, so no private URL ever touches disk)
@@ -1023,6 +1113,23 @@ class BharatBrowserWindow(Gtk.Window):
             box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
         }
 
+        .find-bar {
+            background: rgba(17, 21, 29, 0.96);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 10px;
+            padding: 6px 8px;
+            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+        }
+        .find-bar entry {
+            background-color: rgba(255, 255, 255, 0.06);
+            color: #f1f5f9;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+        .find-match-label {
+            color: #94a3b8;
+            font-size: 90%;
+        }
+
         /* Settings / Downloads / message dialogs: match the dark app chrome
         instead of falling back to the light system GTK theme, which they
         do by default since they're plain Gtk.Dialog/Gtk.MessageDialog
@@ -1126,6 +1233,10 @@ class BharatBrowserWindow(Gtk.Window):
         webview.add_events(Gdk.EventMask.SCROLL_MASK | Gdk.EventMask.SMOOTH_SCROLL_MASK)
         webview.connect("scroll-event", self.on_webview_scroll)
 
+        find_controller = webview.get_find_controller()
+        find_controller.connect("found-text", self.on_find_found_text, webview)
+        find_controller.connect("failed-to-find-text", self.on_find_failed_text, webview)
+
         tab_box.pack_start(webview, True, True, 0)
         tab_box.show_all()
 
@@ -1184,6 +1295,8 @@ class BharatBrowserWindow(Gtk.Window):
         return None
 
     def on_tab_changed(self, notebook, page, page_num):
+        if self.find_bar.get_visible():
+            self.close_find_bar()
         webview = self.get_active_webview()
         if webview:
             uri = webview.get_uri() or ""
@@ -1282,6 +1395,12 @@ class BharatBrowserWindow(Gtk.Window):
             elif keyval in (Gdk.KEY_0, Gdk.KEY_KP_0):
                 self.adjust_zoom(reset=True)
                 return True
+            elif keyval in (Gdk.KEY_f, Gdk.KEY_F):
+                self.open_find_bar()
+                return True
+        elif event.keyval == Gdk.KEY_Escape and self.find_bar.get_visible():
+            self.close_find_bar()
+            return True
         return False
 
     ZOOM_MIN = 0.3
@@ -1329,6 +1448,67 @@ class BharatBrowserWindow(Gtk.Window):
             elif delta_y > 0:
                 self.adjust_zoom(-0.1)
         return True  # consume the event: don't also scroll/pinch-zoom the page
+
+    FIND_OPTIONS = WebKit2.FindOptions.CASE_INSENSITIVE | WebKit2.FindOptions.WRAP_AROUND
+    FIND_MAX_MATCH_COUNT = 1000
+
+    def open_find_bar(self):
+        self.find_bar.show()
+        self.find_entry.grab_focus()
+        text = self.find_entry.get_text()
+        if text:
+            self.find_entry.select_region(0, -1)
+            self._run_find(text)
+
+    def close_find_bar(self):
+        self.find_bar.hide()
+        self.find_match_label.set_text("")
+        webview = self.get_active_webview()
+        if webview:
+            webview.get_find_controller().search_finish()
+        webview_focus = self.get_active_webview()
+        if webview_focus:
+            webview_focus.grab_focus()
+
+    def _run_find(self, text):
+        webview = self.get_active_webview()
+        if not webview:
+            return
+        if not text:
+            webview.get_find_controller().search_finish()
+            self.find_match_label.set_text("")
+            return
+        webview.get_find_controller().search(text, self.FIND_OPTIONS, self.FIND_MAX_MATCH_COUNT)
+
+    def on_find_text_changed(self, entry):
+        self._run_find(entry.get_text())
+
+    def on_find_entry_key_press(self, widget, event):
+        if event.keyval == Gdk.KEY_Escape:
+            self.close_find_bar()
+            return True
+        if event.keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and (event.state & Gdk.ModifierType.SHIFT_MASK):
+            self.find_previous()
+            return True
+        return False
+
+    def find_next(self):
+        webview = self.get_active_webview()
+        if webview and self.find_entry.get_text():
+            webview.get_find_controller().search_next()
+
+    def find_previous(self):
+        webview = self.get_active_webview()
+        if webview and self.find_entry.get_text():
+            webview.get_find_controller().search_previous()
+
+    def on_find_found_text(self, controller, match_count, webview):
+        if self.get_active_webview() == webview:
+            self.find_match_label.set_text(f"{match_count} match" + ("es" if match_count != 1 else ""))
+
+    def on_find_failed_text(self, controller, webview):
+        if self.get_active_webview() == webview:
+            self.find_match_label.set_text("No matches")
 
     def open_private_window(self):
         win = BharatBrowserWindow(private=True)
@@ -1624,6 +1804,36 @@ class BharatBrowserWindow(Gtk.Window):
         if webview:
             webview.load_uri(text)
 
+    def _url_completion_match(self, completion, key, tree_iter, data):
+        model = completion.get_model()
+        url = (model[tree_iter][0] or "").lower()
+        title = (model[tree_iter][1] or "").lower()
+        return key in url or key in title
+
+    def _on_completion_match_selected(self, completion, model, tree_iter):
+        url = model[tree_iter][0]
+        self.url_entry.set_text(url)
+        self.url_entry.set_position(-1)
+        self.on_url_activate(self.url_entry)
+        return True
+
+    def record_history_entry(self, url, title):
+        """Add/refresh a URL-bar autocomplete entry. Guards is_private itself
+        (not just at the on_load_changed call site) so no future call path
+        can accidentally write private-window browsing to disk."""
+        if self.is_private:
+            return
+        if not url or url.startswith("about:"):
+            return
+        self.url_history = [e for e in self.url_history if e.get("url") != url]
+        self.url_history.insert(0, {"url": url, "title": title or url})
+        del self.url_history[HISTORY_MAX_ENTRIES:]
+        save_url_history(self.url_history)
+
+        self.url_completion_store.clear()
+        for entry in self.url_history:
+            self.url_completion_store.append([entry.get("url", ""), entry.get("title", "")])
+
     def on_back_clicked(self, btn):
         webview = self.get_active_webview()
         if webview and webview.can_go_back():
@@ -1673,6 +1883,8 @@ class BharatBrowserWindow(Gtk.Window):
                             urls.append(u)
                 if urls:
                     save_session_state(urls)
+
+                self.record_history_entry(uri, title)
 
             # Injections
             if self.dark_mode_active:

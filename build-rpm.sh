@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.20"
+VERSION="1.2.21"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,13 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.21-1
+- Add Find in Page (Ctrl+F): a floating search bar with live match-count,
+  next/previous (Enter / Shift+Enter), and Escape to close, backed by
+  WebKit's native find controller
+- Add URL bar autocomplete from browsing history (url + title), with
+  substring matching and click/Enter-to-navigate; never recorded or read
+  for private windows
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.20-1
 - Add a "Open homepage on startup" Settings toggle (off by default). Since
   the browser restores your previous session on launch, setting a custom
