@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.11 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.12 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -426,7 +426,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.11"
+        self.current_version = "1.2.12"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -947,6 +947,26 @@ class BharatBrowserWindow(Gtk.Window):
             padding: 2px;
         }
         .update-close-btn:hover { background: rgba(255, 255, 255, 0.08); color: #ffffff; }
+
+        /* Settings / Downloads / message dialogs: match the dark app chrome
+        instead of falling back to the light system GTK theme, which they
+        do by default since they're plain Gtk.Dialog/Gtk.MessageDialog
+        windows outside the styled main window. */
+        window.bharat-dialog, .bharat-dialog {
+            background-color: #11151d;
+            color: #f1f5f9;
+        }
+        .bharat-dialog label { color: #f1f5f9; }
+        .bharat-dialog checkbutton, .bharat-dialog radiobutton { color: #f1f5f9; }
+        .bharat-dialog check, .bharat-dialog radio {
+            background-color: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #f1f5f9;
+        }
+        .bharat-dialog check:checked, .bharat-dialog radio:checked {
+            background-color: #6366f1;
+            border-color: #6366f1;
+        }
         """
         css_provider.load_from_data(css_data)
         Gtk.StyleContext.add_provider_for_screen(
@@ -1122,7 +1142,28 @@ class BharatBrowserWindow(Gtk.Window):
                 if webview:
                     webview.reload()
                 return True
+            elif keyval in (Gdk.KEY_plus, Gdk.KEY_equal, Gdk.KEY_KP_Add):
+                self.adjust_zoom(0.1)
+                return True
+            elif keyval in (Gdk.KEY_minus, Gdk.KEY_KP_Subtract):
+                self.adjust_zoom(-0.1)
+                return True
+            elif keyval in (Gdk.KEY_0, Gdk.KEY_KP_0):
+                self.adjust_zoom(reset=True)
+                return True
         return False
+
+    ZOOM_MIN = 0.3
+    ZOOM_MAX = 3.0
+
+    def adjust_zoom(self, delta=0.0, reset=False):
+        webview = self.get_active_webview()
+        if not webview:
+            return
+        new_level = 1.0 if reset else webview.get_zoom_level() + delta
+        new_level = max(self.ZOOM_MIN, min(self.ZOOM_MAX, new_level))
+        webview.set_zoom_level(new_level)
+        self.push_notification_status(f"🔍 Zoom: {round(new_level * 100)}%")
 
     def open_private_window(self):
         win = BharatBrowserWindow(private=True)
@@ -1187,6 +1228,7 @@ class BharatBrowserWindow(Gtk.Window):
             modal=True,
             destroy_with_parent=True
         )
+        dialog.get_style_context().add_class("bharat-dialog")
         dialog.add_button("Close", Gtk.ResponseType.CLOSE)
         dialog.set_default_size(460, 320)
 
@@ -1342,12 +1384,14 @@ class BharatBrowserWindow(Gtk.Window):
             return False
         self._statusbar_hide_source = GLib.timeout_add_seconds(self.STATUSBAR_AUTOHIDE_SECONDS, _hide)
 
+    VERSION_NOTIFICATION_AUTOHIDE_SECONDS = 2
+
     def show_latest_version_notification(self):
         self.update_dialog_label.set_text(f"Browser is working on latest version (v{self.current_version})")
         self.update_dialog_box.show_all()
         self.btn_restart_update.hide()
         self.push_notification_status(f"✅ Browser is working on latest version (v{self.current_version})")
-        GLib.timeout_add_seconds(5, lambda: (self.update_dialog_box.hide(), False)[1])
+        GLib.timeout_add_seconds(self.VERSION_NOTIFICATION_AUTOHIDE_SECONDS, lambda: (self.update_dialog_box.hide(), False)[1])
 
     def show_update_notification_dialog(self, version_str, installed=True):
         if installed:
@@ -1562,6 +1606,7 @@ class BharatBrowserWindow(Gtk.Window):
                 buttons=Gtk.ButtonsType.OK,
                 text="Screenshot Saved to Desktop"
             )
+            dialog.get_style_context().add_class("bharat-dialog")
             dialog.format_secondary_text(f"File: {filename}\nSaved in ~/Desktop")
             dialog.run()
             dialog.destroy()
@@ -1575,6 +1620,7 @@ class BharatBrowserWindow(Gtk.Window):
             modal=True,
             destroy_with_parent=True
         )
+        dialog.get_style_context().add_class("bharat-dialog")
         dialog.add_button("Close", Gtk.ResponseType.CLOSE)
         dialog.set_default_size(480, 360)
 
@@ -1668,6 +1714,7 @@ class BharatBrowserWindow(Gtk.Window):
             buttons=Gtk.ButtonsType.YES_NO,
             text=f"Allow {kind}?"
         )
+        dialog.get_style_context().add_class("bharat-dialog")
         dialog.format_secondary_text(uri)
         response = dialog.run()
         dialog.destroy()
@@ -1703,6 +1750,7 @@ class BharatBrowserWindow(Gtk.Window):
             buttons=Gtk.ButtonsType.OK,
             text="Browsing History & Cookies Cleared"
         )
+        dialog.get_style_context().add_class("bharat-dialog")
         dialog.format_secondary_text("All browsing history, cached web data, and tracking cookies have been successfully cleared.")
         dialog.run()
         dialog.destroy()

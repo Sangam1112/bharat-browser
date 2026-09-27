@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.11"
+VERSION="1.2.12"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,12 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.12-1
+- Version-check overlay ("browser is up to date") now auto-dismisses after
+  2 seconds instead of 5
+- Settings, Downloads, and message dialogs now render in the app's dark
+  theme instead of falling back to the light system GTK theme
+- Add Ctrl+/Ctrl- to zoom webpage content in/out, and Ctrl+0 to reset zoom
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.11-1
 - Fix URL bar misclassifying single-word LAN hostnames (e.g. "router") as
   search queries instead of URLs; local hostnames now correctly get http://
