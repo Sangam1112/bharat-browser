@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.23 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.24 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -484,7 +484,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.23"
+        self.current_version = "1.2.24"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -609,22 +609,6 @@ class BharatBrowserWindow(Gtk.Window):
         top_bar.set_margin_top(3)
         top_bar.set_margin_bottom(3)
         main_vbox.pack_start(top_bar, False, False, 0)
-
-        # Brand Badge
-        brand_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        brand_box.get_style_context().add_class("brand-box")
-        if self.icon_path and os.path.exists(self.icon_path):
-            try:
-                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(self.icon_path, 22, 22, True)
-                brand_img = Gtk.Image.new_from_pixbuf(pixbuf)
-                brand_box.pack_start(brand_img, False, False, 0)
-            except Exception as e:
-                print("Brand icon load note:", e)
-        brand_text = f"Bharat v{self.current_version}" + (" 🕵 Private" if self.is_private else "")
-        self.brand_label = Gtk.Label(label=brand_text)
-        self.brand_label.get_style_context().add_class("brand-label")
-        brand_box.pack_start(self.brand_label, False, False, 0)
-        top_bar.pack_start(brand_box, False, False, 4)
 
         # Nav Buttons (grouped as a segmented control)
         nav_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -950,12 +934,6 @@ class BharatBrowserWindow(Gtk.Window):
             padding: 0px 0;
         }
 
-        .brand-box {
-            background: rgba(99, 102, 241, 0.10);
-            border: 1px solid rgba(99, 102, 241, 0.28);
-            border-radius: 999px;
-            padding: 4px 12px;
-        }
         .brand-label {
             font-weight: 700;
             color: #e2e8f0;
