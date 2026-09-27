@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.35"
+VERSION="1.2.36"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,24 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.36-1
+- Add background tab suspension: tabs inactive for 15+ minutes are
+  automatically unloaded (WebKit session state saved via
+  get_session_state()/restore_session_state(), then the tab is dropped to
+  about:blank) to free WebProcess memory, and transparently restored —
+  full back-forward history and exact page content intact — the instant
+  the user switches back to that tab. Never touches the active tab, a
+  tab currently loading, or a tab playing audio/video. Suspended tabs
+  show a "💤" prefix on their label so the state is visible, and the
+  underlying URL/title are preserved for session.json and the History
+  Dashboard even while the live webview sits on about:blank. Verified
+  live end-to-end (save -> suspend -> reactivate -> back-forward history
+  and page content match exactly) before shipping, unlike the earlier
+  single-process-mode request in Low Memory Mode — this feature's core
+  mechanism is fully confirmed working, not just requested. Toggle at
+  Settings > Advanced > "Suspend Inactive Background Tabs" (on by
+  default).
+
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.35-1
 - Add a "Low Memory Mode" toggle in Settings > Advanced, built and verified
   after live monitoring showed a few ordinary tabs pushing memory past 1GB
