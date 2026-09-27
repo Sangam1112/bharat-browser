@@ -23,6 +23,7 @@ import subprocess
 import urllib.parse
 import urllib.request
 import gi
+import cairo
 
 gi.require_version('Gtk', '3.0')
 try:
@@ -1613,7 +1614,17 @@ class BharatBrowserWindow(Gtk.Window):
     def on_snapshot_ready(self, webview, result, user_data):
         try:
             surface = webview.get_snapshot_finish(result)
-            pixbuf = Gdk.pixbuf_get_from_surface(surface, 0, 0, surface.get_width(), surface.get_height())
+            width, height = surface.get_width(), surface.get_height()
+            # Flatten onto an opaque RGB24 surface first: the snapshot surface
+            # carries an alpha channel, and some gdk-pixbuf JPEG backends
+            # (e.g. glycin on newer Fedora/GNOME) refuse to encode RGBA as JPEG.
+            opaque_surface = cairo.ImageSurface(cairo.FORMAT_RGB24, width, height)
+            ctx = cairo.Context(opaque_surface)
+            ctx.set_source_rgb(1, 1, 1)
+            ctx.paint()
+            ctx.set_source_surface(surface, 0, 0)
+            ctx.paint()
+            pixbuf = Gdk.pixbuf_get_from_surface(opaque_surface, 0, 0, width, height)
             desktop_dir = os.path.expanduser("~/Desktop")
             os.makedirs(desktop_dir, exist_ok=True)
             timestamp = GLib.DateTime.new_now_local().format("%Y%m%d_%H%M%S")
