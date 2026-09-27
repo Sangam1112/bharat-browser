@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.31 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.32 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -485,7 +485,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.31"
+        self.current_version = "1.2.32"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -1233,6 +1233,11 @@ class BharatBrowserWindow(Gtk.Window):
         webview.connect("permission-request", self.on_permission_request)
         webview.connect("load-failed-with-tls-errors", self.on_load_failed_with_tls_errors)
         webview.connect("load-failed", self.on_load_failed)
+        # Files WebKit can't render inline (Office docs, zip archives, etc.)
+        # would otherwise just interrupt the frame load and surface as a
+        # confusing "page didn't load" error; convert them into a normal
+        # download instead, same as clicking a download link would do.
+        webview.connect("decide-policy", self.on_decide_policy)
         # Without this, WebKit silently drops any navigation that wants a new
         # window/tab (target="_blank", window.open(), middle-click, OAuth
         # popups, etc.) instead of doing anything visible.
@@ -1369,6 +1374,21 @@ class BharatBrowserWindow(Gtk.Window):
         GLib.idle_add(lambda: webview.load_uri(uri))
         self.statusbar.push(self.context_id, "⚠️ Web process recovered automatically.")
 
+    def on_decide_policy(self, webview, decision, decision_type):
+        # Only response decisions (i.e. we already have headers back and
+        # know the content type) carry is_mime_type_supported(); navigation/
+        # new-window decisions don't have a response yet, so leave those to
+        # WebKit's own default handling.
+        if decision_type != WebKit2.PolicyDecisionType.RESPONSE:
+            return False
+        if not decision.is_mime_type_supported():
+            # .doc/.docx/.xls/.xlsx and similar have no in-browser renderer
+            # (unlike PDF, which WebKit renders natively) — download instead
+            # of leaving the user with an interrupted, blank frame.
+            decision.download()
+            return True
+        return False
+
     def on_load_failed_with_tls_errors(self, webview, failing_uri, certificate, errors):
         # No "proceed anyway" bypass: this is a privacy/security-first
         # browser, and offering to click through an invalid cert on a
@@ -1402,6 +1422,14 @@ class BharatBrowserWindow(Gtk.Window):
         # *validation* problems. CANCELLED just means the user navigated
         # away or stopped the load; that's normal, not a real failure.
         if error.matches(WebKit2.network_error_quark(), WebKit2.NetworkError.CANCELLED):
+            return True
+        # Also expected/benign: on_decide_policy() deliberately converts any
+        # response WebKit can't render (Office docs, archives, etc.) into a
+        # download, which itself interrupts the frame load that would have
+        # displayed it. Without this, that expected interruption would count
+        # as a real failure and eventually show a "page didn't load" error
+        # for a download that actually succeeded.
+        if error.matches(WebKit2.policy_error_quark(), WebKit2.PolicyError.FRAME_LOAD_INTERRUPTED_BY_POLICY_CHANGE):
             return True
 
         key = id(webview)

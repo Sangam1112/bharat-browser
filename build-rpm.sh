@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.31"
+VERSION="1.2.32"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,13 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.32-1
+- Fix opening .doc/.docx/.xls/.xlsx (and any other file type WebKit has no
+  in-tab renderer for) showing a confusing "page didn't load" error after
+  wasting a retry. WebKit has no rendering engine for Office formats
+  (unlike PDF, which it renders natively) — these now download instead,
+  same as clicking a download link would do, via a new decide-policy
+  handler that converts any unsupported response into a real download
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.31-1
 - PDF files now render in-tab (WebKit2GTK's built-in PDF.js-based viewer
   already supported this; verified nothing in the app interfered) and the
