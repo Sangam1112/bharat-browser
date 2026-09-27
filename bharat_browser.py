@@ -1,23 +1,46 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.34 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.35 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
 import os
+import json
+
+# CONFIG_DIR/CONFIG_FILE are also used later (load_persistent_settings() and
+# friends) — defined here first because Low Memory Mode's single-process
+# request has to be decided before WebKit2 is imported below: unlike Low
+# Memory Mode's other effect (WebKitWebContext's cache model, set further
+# down), WEBKIT_USE_SINGLE_WEB_PROCESS is only read by WebKit at process
+# startup, not something that can be toggled on an already-running session.
+# Kept set here despite that: confirmed empirically that WebKitGTK 2.54
+# does NOT honor it (4 open tabs still spawned 4 separate WebProcess
+# instances with this set to "1"), so it isn't advertised as a working
+# effect in the Settings UI — left in place only in case it still works on
+# other WebKit versions.
+CONFIG_DIR = os.path.expanduser("~/.config/bharat-browser")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "settings.json")
+
+
+def _read_low_memory_mode_setting():
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            return bool(json.load(f).get("low_memory_mode", False))
+    except Exception:
+        return False
+
 
 # Enable GPU Hardware Acceleration & System-Level Acceleration Flags
 os.environ["WEBKIT_FORCE_COMPOSITING_MODE"] = "1"
 os.environ["GST_VAAPI_ALL_DRIVERS"] = "1"
 os.environ["GST_DEBUG"] = "0"
-os.environ["WEBKIT_USE_SINGLE_WEB_PROCESS"] = "0"
+os.environ["WEBKIT_USE_SINGLE_WEB_PROCESS"] = "1" if _read_low_memory_mode_setting() else "0"
 
 import ast
 import getpass
 import hashlib
 import ipaddress
 import re
-import json
 import time
 import threading
 import subprocess
@@ -213,9 +236,7 @@ def sanitize_url(url_str):
 # down every open private window mid-session with no warning.
 _LIVE_WINDOW_COUNT = 0
 
-CONFIG_DIR = os.path.expanduser("~/.config/bharat-browser")
 CACHE_DIR = os.path.expanduser("~/.cache/bharat-browser")
-CONFIG_FILE = os.path.join(CONFIG_DIR, "settings.json")
 SESSION_FILE = os.path.join(CONFIG_DIR, "session.json")
 HISTORY_FILE = os.path.join(CONFIG_DIR, "history.json")
 HISTORY_MAX_ENTRIES = 500
@@ -523,7 +544,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.34"
+        self.current_version = "1.2.35"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -579,6 +600,7 @@ class BharatBrowserWindow(Gtk.Window):
         self.homepage = sanitize_homepage_url(saved_settings.get("homepage", DEFAULT_HOMEPAGE))
         self.open_homepage_on_startup = saved_settings.get("open_homepage_on_startup", False)
         self.first_run_greeted = saved_settings.get("first_run_greeted", False)
+        self.low_memory_mode = saved_settings.get("low_memory_mode", False)
 
         # URL-bar autocomplete history. Never loaded/written for private
         # windows, matching the session-state privacy guarantee.
@@ -605,7 +627,14 @@ class BharatBrowserWindow(Gtk.Window):
             self.context = WebKit2.WebContext.get_default()
 
         if hasattr(WebKit2, 'CacheModel') and hasattr(WebKit2.CacheModel, 'WEB_BROWSER'):
-            self.context.set_cache_model(WebKit2.CacheModel.WEB_BROWSER)
+            # Low Memory Mode trades WEB_BROWSER's aggressive disk/memory
+            # caching (optimized for fast repeat navigation) for
+            # DOCUMENT_VIEWER's much smaller footprint. Unlike the
+            # single-process setting below, WebKitWebContext's cache model
+            # can be changed on an already-running context, so this part of
+            # Low Memory Mode takes effect immediately, no restart needed.
+            model = WebKit2.CacheModel.DOCUMENT_VIEWER if self.low_memory_mode else WebKit2.CacheModel.WEB_BROWSER
+            self.context.set_cache_model(model)
         self.context.connect("download-started", self.on_download_started)
 
         # WebKit Settings Optimization
@@ -2258,7 +2287,8 @@ class BharatBrowserWindow(Gtk.Window):
             "search_engine": self.search_engine,
             "homepage": self.homepage,
             "open_homepage_on_startup": self.open_homepage_on_startup,
-            "first_run_greeted": self.first_run_greeted
+            "first_run_greeted": self.first_run_greeted,
+            "low_memory_mode": self.low_memory_mode
         })
 
     def on_dark_clicked(self, btn):
@@ -2537,6 +2567,24 @@ class BharatBrowserWindow(Gtk.Window):
         chk_devtools.connect("toggled", lambda cb: self.on_devtools_toggled(cb.get_active()))
         advanced_box.pack_start(chk_devtools, False, False, 0)
 
+        chk_low_memory = Gtk.CheckButton(label="🪶 Low Memory Mode")
+        chk_low_memory.set_tooltip_text(
+            "Shrinks WebKit's page cache immediately — trades some repeat-page "
+            "load speed for a smaller memory footprint, for machines with "
+            "limited RAM. Also requests one shared render process for all "
+            "tabs after a restart, though on current WebKitGTK versions "
+            "(confirmed on 2.54) that request is not honored — the cache "
+            "reduction is the effect actually verified to work."
+        )
+        chk_low_memory.set_active(self.low_memory_mode)
+        chk_low_memory.connect("toggled", lambda cb: self.on_low_memory_mode_toggled(cb.get_active()))
+        advanced_box.pack_start(chk_low_memory, False, False, 0)
+
+        low_memory_hint = Gtk.Label(xalign=0.0)
+        low_memory_hint.set_markup("<small>Reduces WebKit's cache size immediately, no restart needed.</small>")
+        low_memory_hint.get_style_context().add_class("settings-hint-label")
+        advanced_box.pack_start(low_memory_hint, False, False, 0)
+
         # --- Actions -------------------------------------------------------
         actions_frame, actions_box = self._settings_section("Actions")
         vbox.pack_start(actions_frame, False, False, 0)
@@ -2566,6 +2614,25 @@ class BharatBrowserWindow(Gtk.Window):
         self.dev_tools_enabled = active
         self.web_settings.set_enable_developer_extras(active)
         self.save_settings()
+
+    def on_low_memory_mode_toggled(self, active):
+        self.low_memory_mode = active
+        self.save_settings()
+        # Cache model applies to the already-running WebKitWebContext
+        # immediately. WEBKIT_USE_SINGLE_WEB_PROCESS is also set for next
+        # launch (see the startup env-var logic near the top of the file),
+        # but empirically confirmed NOT honored on WebKitGTK 2.54 (4 tabs
+        # still spawned 4 separate WebProcess instances with it set to "1")
+        # — left in place in case it does something on other WebKit
+        # versions, but the cache-size reduction below is the verified
+        # effect, which is why it's the only one advertised in the UI text.
+        if hasattr(WebKit2, 'CacheModel') and hasattr(WebKit2.CacheModel, 'WEB_BROWSER'):
+            model = WebKit2.CacheModel.DOCUMENT_VIEWER if active else WebKit2.CacheModel.WEB_BROWSER
+            self.context.set_cache_model(model)
+        self.statusbar.push(
+            self.context_id,
+            "🪶 Low Memory Mode " + ("enabled" if active else "disabled")
+        )
 
     def on_webrtc_toggled(self, active):
         self.webrtc_enabled = active

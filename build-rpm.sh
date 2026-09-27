@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.34"
+VERSION="1.2.35"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,18 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.35-1
+- Add a "Low Memory Mode" toggle in Settings > Advanced, built and verified
+  after live monitoring showed a few ordinary tabs pushing memory past 1GB
+  and reproducibly triggering silent process death on a 3.7GB-RAM test
+  machine already under swap pressure. Immediately shrinks WebKit's page
+  cache (WEB_BROWSER -> DOCUMENT_VIEWER cache model) with no restart
+  needed. Also requests a single shared render process for all tabs after
+  a restart, but empirical testing found WebKitGTK 2.54 does not honor
+  that request (4 tabs still spawned 4 separate WebProcess instances with
+  it set) — left in place for other WebKit versions but not advertised as
+  a working effect, so the feature only promises what was actually
+  verified to help
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.34-1
 - Fix History Dashboard/autocomplete entries getting permanently stuck on
   a URL-filename fallback instead of the real page title for most

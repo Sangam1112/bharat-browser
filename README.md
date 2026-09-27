@@ -1,8 +1,8 @@
-# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.34
+# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.35
 
 > **Modern, Ultra-Fast, and Privacy-First Web Browser engineered for Linux (Fedora & Ubuntu)**
 
-[![Version](https://img.shields.io/badge/version-1.2.34-blue.svg)](https://github.com/Sangam1112/bharat-browser)
+[![Version](https://img.shields.io/badge/version-1.2.35-blue.svg)](https://github.com/Sangam1112/bharat-browser)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Fedora%20%7C%20Ubuntu%20%7C%20Linux-orange.svg)]()
 [![Privacy](https://img.shields.io/badge/privacy-Strict%20Enforcement-red.svg)]()
@@ -23,6 +23,7 @@
 * **Smart Resource Handling** — Custom disk cache, low-memory cache trimming, and crash-resilient tabs keep the browser responsive under pressure.
 * **Built-In Downloads** — Native download manager with collision-safe filenames, history, and progress notifications.
 * **In-Tab PDF Viewing** — Open a PDF and it renders directly in the tab via WebKit's built-in viewer, no download prompt.
+* **Low Memory Mode** — Settings > Advanced toggle that shrinks WebKit's cache for a smaller memory footprint on RAM-constrained machines.
 * **Find in Page & Smart Address Bar** — Ctrl+F live-search with match count, plus URL-bar autocomplete from your browsing history (skipped entirely in Private windows).
 * **History Dashboard** — Ctrl+H opens a ranked view of visited sites by time spent, with visit counts and last-visited times.
 
@@ -70,18 +71,18 @@ cd bharat-browser
 ./install-fedora.sh
 ```
 
-**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.34_fedora.tar.gz`)**
+**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.35_fedora.tar.gz`)**
 ```bash
 # 1. Extract the release archive
-tar -xzf bharat-browser_1.2.34_fedora.tar.gz -C /tmp/bharat_fedora
+tar -xzf bharat-browser_1.2.35_fedora.tar.gz -C /tmp/bharat_fedora
 
 # 2. Run installer script from archive
 cd /tmp/bharat_fedora && ./install-fedora.sh
 ```
 
-**Option C: Install the RPM directly (`bharat-browser-1.2.34-1.fc44.noarch.rpm`)**
+**Option C: Install the RPM directly (`bharat-browser-1.2.35-1.fc44.noarch.rpm`)**
 ```bash
-sudo dnf install ./bharat-browser-1.2.34-1.fc44.noarch.rpm
+sudo dnf install ./bharat-browser-1.2.35-1.fc44.noarch.rpm
 ```
 
 ### 🟠 Ubuntu / Debian Linux Installation
@@ -96,9 +97,9 @@ cd bharat-browser
 ./install-ubuntu.sh
 ```
 
-**Option B: Install the .deb directly (`bharat-browser_1.2.34-1_all.deb`)**
+**Option B: Install the .deb directly (`bharat-browser_1.2.35-1_all.deb`)**
 ```bash
-sudo apt install ./bharat-browser_1.2.34-1_all.deb
+sudo apt install ./bharat-browser_1.2.35-1_all.deb
 ```
 `apt install ./file.deb` (not `dpkg -i`) so `apt` resolves and installs
 the GTK3/WebKit2GTK dependencies automatically. This always installs
