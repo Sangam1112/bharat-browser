@@ -1,10 +1,10 @@
-# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.25
+# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.26
 
-> **Modern, Ultra-Fast, and Privacy-First Web Browser engineered for Linux (Fedora)**
+> **Modern, Ultra-Fast, and Privacy-First Web Browser engineered for Linux (Fedora & Ubuntu)**
 
-[![Version](https://img.shields.io/badge/version-1.2.25-blue.svg)](https://github.com/Sangam1112/bharat-browser)
+[![Version](https://img.shields.io/badge/version-1.2.26-blue.svg)](https://github.com/Sangam1112/bharat-browser)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Fedora%20%7C%20Linux-orange.svg)]()
+[![Platform](https://img.shields.io/badge/platform-Fedora%20%7C%20Ubuntu%20%7C%20Linux-orange.svg)]()
 [![Privacy](https://img.shields.io/badge/privacy-Strict%20Enforcement-red.svg)]()
 
 ---
@@ -27,7 +27,7 @@
 
 ---
 
-## 📦 Installation Guide (Fedora, plus Windows via WSL2)
+## 📦 Installation Guide (Fedora, Ubuntu/Debian, plus Windows via WSL2)
 
 ### 🔵 Fedora Linux Installation
 
@@ -41,19 +41,32 @@ cd bharat-browser
 ./install-fedora.sh
 ```
 
-**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.25_fedora.tar.gz`)**
+**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.26_fedora.tar.gz`)**
 ```bash
 # 1. Extract the release archive
-tar -xzf bharat-browser_1.2.25_fedora.tar.gz -C /tmp/bharat_fedora
+tar -xzf bharat-browser_1.2.26_fedora.tar.gz -C /tmp/bharat_fedora
 
 # 2. Run installer script from archive
 cd /tmp/bharat_fedora && ./install-fedora.sh
 ```
 
-**Option C: Install the RPM directly (`bharat-browser-1.2.25-1.fc44.noarch.rpm`)**
+**Option C: Install the RPM directly (`bharat-browser-1.2.26-1.fc44.noarch.rpm`)**
 ```bash
-sudo dnf install ./bharat-browser-1.2.25-1.fc44.noarch.rpm
+sudo dnf install ./bharat-browser-1.2.26-1.fc44.noarch.rpm
 ```
+
+### 🟠 Ubuntu / Debian Linux Installation
+
+```bash
+git clone https://github.com/Sangam1112/bharat-browser.git
+cd bharat-browser
+./install-ubuntu.sh
+```
+This installs the required GTK3/WebKit2GTK dependencies via `apt`
+(`gir1.2-webkit2-4.1` on Ubuntu 24.04+, `gir1.2-webkit2-4.0` on older
+releases — detected automatically), copies the app to `~/.local` by
+default, and registers a desktop launcher entry. Pass `--system` for a
+system-wide `/usr` install instead (prompts for `sudo`).
 
 ### 🪟 How to run on Windows 10/11
 

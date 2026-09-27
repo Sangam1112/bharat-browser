@@ -1,5 +1,8 @@
 #!/bin/bash
 # Installation script for Bharat Browser inside WSL2 (Ubuntu/Debian) on Windows 11.
+# For native Ubuntu/Debian Linux (not WSL), use install-ubuntu.sh instead —
+# same dependencies, but with desktop-shortcut/icon registration, which WSLg
+# doesn't need since it launches straight from the command this script installs.
 #
 # Windows 11 ships WSLg, which runs Linux GUI apps side-by-side with Windows
 # apps (its own taskbar entry, no separate VM window). Bharat Browser is a
