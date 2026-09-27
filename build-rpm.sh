@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.30"
+VERSION="1.2.31"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,19 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.31-1
+- PDF files now render in-tab (WebKit2GTK's built-in PDF.js-based viewer
+  already supported this; verified nothing in the app interfered) and the
+  tab/window title now falls back to the file's name instead of getting
+  stuck on "New Tab" for PDFs and other titleless content
+- Fix a pre-existing race: get_title() is still empty at the exact instant
+  load-changed(FINISHED) fires (confirmed: WebKit sets the real title
+  ~200ms later via notify::title, even for a trivial local page), so the
+  tab label and window title could get stuck one step behind, or never
+  correct themselves, until a tab switch happened to re-read it. Added a
+  notify::title handler so the tab label and window title (and the
+  history entry's recorded title) always reflect the real title once
+  WebKit reports it, not just whatever was available at FINISHED
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.30-1
 - Verified the .deb package with real `apt install` runs inside actual
   Ubuntu 22.04 and 24.04 containers (podman): full dependency resolution,

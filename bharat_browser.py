@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.30 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.31 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -485,7 +485,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.30"
+        self.current_version = "1.2.31"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -1227,6 +1227,7 @@ class BharatBrowserWindow(Gtk.Window):
 
         # Signals
         webview.connect("load-changed", self.on_load_changed)
+        webview.connect("notify::title", self.on_webview_title_notify)
         webview.connect("resource-load-started", self.on_resource_load_started)
         webview.connect("web-process-terminated", self.on_web_process_terminated)
         webview.connect("permission-request", self.on_permission_request)
@@ -2056,13 +2057,36 @@ class BharatBrowserWindow(Gtk.Window):
         if webview:
             webview.reload()
 
+    def _resolve_display_title(self, webview):
+        title = webview.get_title()
+        if not title:
+            # No <title> to report (WebKit's PDF.js-based in-tab viewer, a
+            # directly-opened image, etc.) — fall back to the URL's filename
+            # instead of leaving the tab stuck on a generic placeholder.
+            uri = webview.get_uri() or ""
+            title = os.path.basename(urllib.parse.urlparse(uri).path.rstrip('/'))
+        return title or "New Tab"
+
+    def _apply_display_title(self, webview):
+        title = self._resolve_display_title(webview)
+        for i in range(self.notebook.get_n_pages()):
+            tab_box = self.notebook.get_nth_page(i)
+            if hasattr(tab_box, '_bharat_webview') and tab_box._bharat_webview == webview:
+                if hasattr(tab_box, '_bharat_label'):
+                    tab_box._bharat_label.set_text(title)
+                break
+        if self.get_active_webview() == webview:
+            self.set_title(f"{title} - Bharat Browser v{self.current_version}")
+
+    def on_webview_title_notify(self, webview, pspec):
+        self._apply_display_title(webview)
+
     def on_load_changed(self, webview, load_event):
         if load_event == WebKit2.LoadEvent.STARTED:
             self.statusbar.push(self.context_id, "Loading webpage...")
         elif load_event == WebKit2.LoadEvent.FINISHED:
             self._crash_counts.pop(id(webview), None)
             uri = webview.get_uri() or ""
-            title = webview.get_title() or "New Tab"
             # WebKit fires load-changed(FINISHED) even for a load that just
             # failed (load-failed fires first, with the webview's URI back
             # to empty at this point) — only clear the retry counter on a
@@ -2071,21 +2095,21 @@ class BharatBrowserWindow(Gtk.Window):
             # ever reaching the "show a friendly error page" threshold.
             if uri:
                 self._load_failure_counts.pop(id(webview), None)
-            
+
             active_wv = self.get_active_webview()
             if active_wv == webview:
                 self.url_entry.set_text(uri)
                 self.update_security_icon(uri)
-                self.set_title(f"{title} - Bharat Browser v{self.current_version}")
                 self.statusbar.push(self.context_id, f"Ready | {uri}")
 
-            # Update tab label
-            for i in range(self.notebook.get_n_pages()):
-                tab_box = self.notebook.get_nth_page(i)
-                if hasattr(tab_box, '_bharat_webview') and tab_box._bharat_webview == webview:
-                    if hasattr(tab_box, '_bharat_label'):
-                        tab_box._bharat_label.set_text(title)
-                    break
+            # get_title() is often still empty at this exact instant — WebKit
+            # sets it slightly later via "notify::title" (confirmed: title is
+            # None at FINISHED, arrives ~200ms after even for a trivial local
+            # page). _apply_display_title() runs now for an immediate
+            # best-effort label, and the notify::title handler below corrects
+            # it once the real title (or, for the PDF.js viewer, no title —
+            # hence the filename fallback in _resolve_display_title) is known.
+            self._apply_display_title(webview)
 
             # Save session state across tabs (skipped for private windows)
             if not self.is_private:
@@ -2100,7 +2124,7 @@ class BharatBrowserWindow(Gtk.Window):
                     save_session_state(urls)
 
                 self._flush_page_view(webview)
-                self.record_history_entry(uri, title)
+                self.record_history_entry(uri, self._resolve_display_title(webview))
                 self._start_page_view(webview, uri)
 
             # Injections
