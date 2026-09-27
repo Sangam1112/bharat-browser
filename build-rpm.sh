@@ -5,8 +5,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.10"
+VERSION="1.2.11"
 PKG_NAME="bharat-browser"
+OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
 
 echo "Building package for ${PKG_NAME} v${VERSION}..."
@@ -51,6 +52,20 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.11-1
+- Fix URL bar misclassifying single-word LAN hostnames (e.g. "router") as
+  search queries instead of URLs; local hostnames now correctly get http://
+- Fix version-comparison helper mangling pre-release suffixes (e.g.
+  "1.2.10-rc1") into bogus numbers instead of ignoring them
+- Fix screenshot filenames silently overwriting when two shots are taken in
+  the same second; now collision-safe like downloads
+- Settings and session files are now written with 0600 permissions from
+  creation instead of default umask-dependent permissions
+- Add explicit TLS certificate-error handling with no click-through bypass,
+  consistent with this browser's HTTPS-enforcement guarantee
+- Fix statusbar auto-hide timers stacking on rapid status updates, which
+  could hide the bar out from under a newer message
+- build-rpm.sh no longer hardcodes a developer's home directory for output
 * Sat Sep 26 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.10-1
 - Performance/memory tuning: media-polyfill's per-tab 1500ms DOM poll loop
   replaced with a MutationObserver (removes a permanent per-tab CPU wakeup)
@@ -107,5 +122,6 @@ fi
 cp install-fedora.sh "${BUILD_ROOT}/install-fedora.sh"
 chmod +x "${BUILD_ROOT}/install-fedora.sh"
 tar -czf "bharat-browser_${VERSION}_fedora.tar.gz" -C "$BUILD_ROOT" .
-cp "bharat-browser_${VERSION}_fedora.tar.gz" /home/parabz/Downloads/bharat-browser_${VERSION}_fedora.tar.gz
-echo "Archive generated: bharat-browser_${VERSION}_fedora.tar.gz"
+mkdir -p "$OUTPUT_DIR"
+cp "bharat-browser_${VERSION}_fedora.tar.gz" "$OUTPUT_DIR/bharat-browser_${VERSION}_fedora.tar.gz"
+echo "Archive generated: bharat-browser_${VERSION}_fedora.tar.gz (copied to $OUTPUT_DIR)"

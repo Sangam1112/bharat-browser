@@ -8,12 +8,22 @@ cd "$SCRIPT_DIR"
 echo "=========================================="
 echo "Installing Bharat Browser on Fedora Linux"
 echo "=========================================="
+echo "(Installs to ~/.local by default. Pass --system for a system-wide"
+echo " /usr install; you'll be prompted for sudo.)"
 
 USE_SUDO=false
 if [ "$EUID" -ne 0 ]; then
-    if sudo -n true 2>/dev/null; then
-        USE_SUDO=true
+    if [ "$1" = "--system" ]; then
+        if sudo -v; then
+            USE_SUDO=true
+        else
+            echo "System-wide install requested but sudo authentication failed." >&2
+            exit 1
+        fi
     fi
+    # No silent escalation: passwordless sudo being configured for unrelated
+    # reasons shouldn't change this script's behavior from a user-local
+    # install to a system-wide one without the user asking for it.
 else
     USE_SUDO=true
 fi

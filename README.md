@@ -1,8 +1,8 @@
-# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.5
+# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.11
 
 > **Modern, Ultra-Fast, and Privacy-First Web Browser engineered for Linux (Ubuntu)**
 
-[![Version](https://img.shields.io/badge/version-1.2.5-blue.svg)](https://github.com/Sangam1112/bharat-browser)
+[![Version](https://img.shields.io/badge/version-1.2.11-blue.svg)](https://github.com/Sangam1112/bharat-browser)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Ubuntu%20%7C%20Linux-orange.svg)]()
 [![Privacy](https://img.shields.io/badge/privacy-Strict%20Enforcement-red.svg)]()
@@ -40,7 +40,7 @@
 * **Universal Dark Mode**: Integrates the open-source DarkReader engine to inject clean, high-contrast dark themes into every visited website without causing visual artifacting.
 
 ### 📥 Integrated Download Manager
-* **Native Downloads**: Built-in download manager featuring real-time download speed calculation, progress tracking, file organization, and desktop notifications.
+* **Native Downloads**: Built-in download manager with collision-safe filenames, a downloads history dialog, and status-bar progress notifications (started/completed/failed).
 
 ---
 
@@ -58,23 +58,26 @@ cd bharat-browser
 ./install-fedora.sh
 ```
 
-**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.5_fedora.tar.gz`)**
+**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.11_fedora.tar.gz`)**
 ```bash
 # 1. Extract the release archive
-tar -xzf bharat-browser_1.2.5_fedora.tar.gz -C /tmp/bharat_fedora
+tar -xzf bharat-browser_1.2.11_fedora.tar.gz -C /tmp/bharat_fedora
 
 # 2. Run installer script from archive
 cd /tmp/bharat_fedora && ./install-fedora.sh
 ```
 
-### 🟠 Ubuntu / Debian Installation
+**Option C: Install the RPM directly (`bharat-browser-1.2.11-1.fc44.noarch.rpm`)**
+```bash
+sudo dnf install ./bharat-browser-1.2.11-1.fc44.noarch.rpm
+```
+
+### 🪟 WSL2 / Windows 11 Installation
 
 ```bash
-# Download or locate the generated .deb file
-sudo dpkg -i bharat-browser_1.2.5_amd64.deb
-
-# Resolve any missing dependencies if prompted
-sudo apt-get install -f
+git clone https://github.com/Sangam1112/bharat-browser.git
+cd bharat-browser
+./install-wsl.sh
 ```
 
 ---

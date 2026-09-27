@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.10 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.11 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -146,6 +146,10 @@ def is_ad_or_tracker(url_str):
             except Exception:
                 pass
 
+        # Everything below only runs when the optional `adblockparser`
+        # dependency isn't installed, or it raised above: a plain-Python
+        # fallback over the same BLOCKED_DOMAINS/BLOCKED_REGEX data, not a
+        # second, independent blocking tier.
         # Stage 1: O(1) Domain Set Pre-lookup
         if host in BLOCKED_DOMAINS:
             return True
@@ -214,11 +218,18 @@ def load_persistent_settings():
         print("Settings load note:", e)
     return {}
 
+def _write_json_private(path, data):
+    """Write JSON with 0600 permissions from creation, not applied after the
+    fact, so browsing history/session data is never briefly world/group
+    readable and isn't left exposed if a chmod step were skipped."""
+    fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
 def save_persistent_settings(settings):
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(settings, f, indent=2)
+        _write_json_private(CONFIG_FILE, settings)
     except Exception as e:
         print("Settings save note:", e)
 
@@ -235,8 +246,7 @@ def save_session_state(urls):
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
         temp_file = SESSION_FILE + ".tmp"
-        with open(temp_file, "w", encoding="utf-8") as f:
-            json.dump({"urls": urls, "timestamp": time.time()}, f, indent=2)
+        _write_json_private(temp_file, {"urls": urls, "timestamp": time.time()})
         os.replace(temp_file, SESSION_FILE)
     except Exception as e:
         print("Session save note:", e)
@@ -416,7 +426,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.10"
+        self.current_version = "1.2.11"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -969,6 +979,7 @@ class BharatBrowserWindow(Gtk.Window):
         webview.connect("resource-load-started", self.on_resource_load_started)
         webview.connect("web-process-terminated", self.on_web_process_terminated)
         webview.connect("permission-request", self.on_permission_request)
+        webview.connect("load-failed-with-tls-errors", self.on_load_failed_with_tls_errors)
 
         tab_box.pack_start(webview, True, True, 0)
         tab_box.show_all()
@@ -1066,6 +1077,29 @@ class BharatBrowserWindow(Gtk.Window):
         uri = webview.get_uri() or "https://www.google.co.in"
         GLib.idle_add(lambda: webview.load_uri(uri))
         self.statusbar.push(self.context_id, "⚠️ Web process recovered automatically.")
+
+    def on_load_failed_with_tls_errors(self, webview, failing_uri, certificate, errors):
+        # No "proceed anyway" bypass: this is a privacy/security-first
+        # browser, and offering to click through an invalid cert on a
+        # connection that HTTPS-enforcement just upgraded (or that was
+        # https:// to begin with) would defeat that guarantee for exactly
+        # the connections where it matters most (public hostnames, not
+        # local-network devices, which HTTPS enforcement already exempts).
+        print(f"TLS certificate error for {failing_uri} (errors={errors}); load blocked.")
+        host = (urllib.parse.urlparse(failing_uri).hostname or failing_uri)
+        error_html = (
+            "<html><body style='background:#0b0e14;color:#f8fafc;"
+            "font-family:sans-serif;padding:40px;'>"
+            "<h2>⚠️ Your connection is not private</h2>"
+            f"<p>Bharat Browser blocked this page because <b>{GLib.markup_escape_text(host)}</b> "
+            "presented an invalid or untrusted security certificate.</p>"
+            "<p>This browser does not offer a way to bypass certificate errors, "
+            "to keep HTTPS connections trustworthy.</p>"
+            "</body></html>"
+        )
+        GLib.idle_add(lambda: webview.load_html(error_html, failing_uri))
+        self.statusbar.push(self.context_id, f"⚠️ Blocked invalid certificate on {host}")
+        return True
 
     def on_key_press(self, widget, event):
         ctrl = event.state & Gdk.ModifierType.CONTROL_MASK
@@ -1191,13 +1225,26 @@ class BharatBrowserWindow(Gtk.Window):
         threading.Thread(target=self.async_git_update_check, daemon=True).start()
         return False
 
+    @staticmethod
+    def _version_parts(v):
+        # Stop at the first non-numeric token (pre-release suffixes like
+        # "-rc1"): a naive `[^0-9.]` strip previously merged "1.2.10-rc1"
+        # into "1.2.101", corrupting the comparison instead of ignoring the
+        # suffix.
+        parts = []
+        for token in re.split(r'[.\-+]', v):
+            m = re.match(r'\d+', token)
+            if not m:
+                break
+            parts.append(int(m.group()))
+        return parts
+
     def compare_versions(self, v1, v2):
-        p1 = [int(x) for x in re.sub(r'[^0-9.]', '', v1).split('.') if x.isdigit()]
-        p2 = [int(x) for x in re.sub(r'[^0-9.]', '', v2).split('.') if x.isdigit()]
+        p1, p2 = self._version_parts(v1), self._version_parts(v2)
         for a, b in zip(p1, p2):
             if a > b: return 1
             if a < b: return -1
-        return len(p1) - len(p2)
+        return (len(p1) > len(p2)) - (len(p1) < len(p2))
 
     def async_git_update_check(self):
         try:
@@ -1278,10 +1325,22 @@ class BharatBrowserWindow(Gtk.Window):
         except Exception as e:
             print("Restart failed:", e)
 
+    STATUSBAR_AUTOHIDE_SECONDS = 5
+
     def push_notification_status(self, message):
         self.statusbar.show_all()
         self.statusbar.push(self.context_id, message)
-        GLib.timeout_add_seconds(5, lambda: (self.statusbar.hide(), False)[1])
+        # Cancel any previously scheduled auto-hide so a fast run of status
+        # updates doesn't stack multiple timers that later hide the bar out
+        # from under a newer message still meant to be showing.
+        pending = getattr(self, "_statusbar_hide_source", None)
+        if pending is not None:
+            GLib.source_remove(pending)
+        def _hide():
+            self.statusbar.hide()
+            self._statusbar_hide_source = None
+            return False
+        self._statusbar_hide_source = GLib.timeout_add_seconds(self.STATUSBAR_AUTOHIDE_SECONDS, _hide)
 
     def show_latest_version_notification(self):
         self.update_dialog_label.set_text(f"Browser is working on latest version (v{self.current_version})")
@@ -1339,11 +1398,17 @@ class BharatBrowserWindow(Gtk.Window):
         if not text:
             return
         if not text.startswith("http://") and not text.startswith("https://") and not text.startswith("about:"):
-            if "." in text and " " not in text:
-                text = "https://" + text
+            host_candidate = text.split('/', 1)[0].split(':', 1)[0]
+            looks_like_url = " " not in text and ("." in host_candidate or is_local_network_host(host_candidate))
+            if looks_like_url:
+                # Bare local hostnames (routers, printers, dev boxes) rarely
+                # have a real HTTPS cert to upgrade to; real FQDNs still go
+                # through the on_resource_load_started HTTPS-upgrade path.
+                scheme = "http://" if is_local_network_host(host_candidate) else "https://"
+                text = scheme + text
             else:
                 text = f"https://www.google.com/search?q={urllib.parse.quote(text)}"
-        
+
         webview = self.get_active_webview()
         if webview:
             webview.load_uri(text)
@@ -1484,8 +1549,8 @@ class BharatBrowserWindow(Gtk.Window):
             desktop_dir = os.path.expanduser("~/Desktop")
             os.makedirs(desktop_dir, exist_ok=True)
             timestamp = GLib.DateTime.new_now_local().format("%Y%m%d_%H%M%S")
-            filename = f"BharatScreenshot_{timestamp}.jpeg"
-            filepath = os.path.join(desktop_dir, filename)
+            filepath = self.unique_download_path(desktop_dir, f"BharatScreenshot_{timestamp}.jpeg")
+            filename = os.path.basename(filepath)
             pixbuf.savev(filepath, "jpeg", ["quality"], ["90"])
             self.statusbar.push(self.context_id, f"📸 Screenshot saved to Desktop: {filename}")
 
