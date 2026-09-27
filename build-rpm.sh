@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.18"
+VERSION="1.2.20"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,21 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.20-1
+- Add a "Open homepage on startup" Settings toggle (off by default). Since
+  the browser restores your previous session on launch, setting a custom
+  homepage previously had no effect on startup, only on new tabs; this
+  toggle lets homepage win over session restore when turned on
+- Fix normal mouse-wheel/touchpad page scrolling being completely broken
+  by the v1.2.18 Ctrl+scroll-zoom fix: a Gtk.EventControllerScroll attached
+  directly to the webview (in either CAPTURE or BUBBLE phase) fully claims
+  scroll input at the GTK controller-framework level, which is mutually
+  exclusive with WebKit's own native page-scroll handling. Reverted to a
+  plain "scroll-event" signal connection (with SCROLL_MASK/SMOOTH_SCROLL_MASK
+  requested via add_events), which doesn't have that problem: returning
+  False lets the event continue on to WebKit's normal scroll handling.
+  Re-verified both normal scrolling and Ctrl+scroll zoom against live
+  synthetic GDK events after the fix.
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.18-1
 - Fix Ctrl+scroll zoom not actually working: it was wired up via a plain
   "scroll-event" GTK signal, but WebKitWebView manages its own native

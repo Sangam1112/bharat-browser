@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.18 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.20 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -460,7 +460,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.18"
+        self.current_version = "1.2.20"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -510,6 +510,7 @@ class BharatBrowserWindow(Gtk.Window):
         if self.search_engine not in SEARCH_ENGINES:
             self.search_engine = DEFAULT_SEARCH_ENGINE
         self.homepage = sanitize_homepage_url(saved_settings.get("homepage", DEFAULT_HOMEPAGE))
+        self.open_homepage_on_startup = saved_settings.get("open_homepage_on_startup", False)
 
         self.apply_custom_css()
 
@@ -756,6 +757,8 @@ class BharatBrowserWindow(Gtk.Window):
         # Restore Session or Open Initial Tab (private windows never read or
         # write session.json, so no private URL ever touches disk)
         if self.is_private:
+            initial_urls = [self.homepage]
+        elif self.open_homepage_on_startup:
             initial_urls = [self.homepage]
         else:
             saved_session = load_session_state()
@@ -1112,22 +1115,16 @@ class BharatBrowserWindow(Gtk.Window):
         # popups, etc.) instead of doing anything visible.
         webview.connect("create", self.on_create_webview)
 
-        # Ctrl+scroll to zoom. WebKitWebView manages its own native input
-        # surface for page scrolling, so it can consume wheel/touchpad
-        # events before a plain "scroll-event" signal connection ever sees
-        # them. A Gtk.EventControllerScroll in the CAPTURE phase runs before
-        # the widget's own handling gets a chance, so it reliably intercepts
-        # Ctrl+scroll regardless of what WebKit itself does with the event.
-        scroll_controller = Gtk.EventControllerScroll.new(
-            webview,
-            Gtk.EventControllerScrollFlags.VERTICAL | Gtk.EventControllerScrollFlags.DISCRETE
-        )
-        scroll_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        scroll_controller.connect("scroll", self.on_webview_scroll_controller)
-        # GTK3's EventController isn't kept alive by the widget the way
-        # GTK4's is, so without a strong reference here it would be garbage
-        # collected almost immediately and silently stop firing.
-        webview._bharat_scroll_controller = scroll_controller
+        # Ctrl+scroll to zoom. A Gtk.EventControllerScroll attached directly
+        # to the webview (tried in a prior version, both CAPTURE and BUBBLE
+        # phase) fully claims scroll input at the GTK controller-framework
+        # level, which turned out to be mutually exclusive with WebKit's own
+        # native page-scroll handling — it broke normal mouse-wheel/touchpad
+        # scrolling entirely. The plain "scroll-event" signal doesn't have
+        # that problem: returning False lets the event continue on to
+        # WebKit's normal handling exactly like any unhandled GTK signal.
+        webview.add_events(Gdk.EventMask.SCROLL_MASK | Gdk.EventMask.SMOOTH_SCROLL_MASK)
+        webview.connect("scroll-event", self.on_webview_scroll)
 
         tab_box.pack_start(webview, True, True, 0)
         tab_box.show_all()
@@ -1318,16 +1315,19 @@ class BharatBrowserWindow(Gtk.Window):
             return False
         self._zoom_indicator_hide_source = GLib.timeout_add_seconds(self.ZOOM_INDICATOR_AUTOHIDE_SECONDS, _hide)
 
-    def on_webview_scroll_controller(self, controller, dx, dy):
-        # EventControllerScroll's "scroll" signal doesn't pass modifier state
-        # directly, so read the keyboard's live state instead.
-        modifiers = Gdk.Keymap.get_default().get_modifier_state()
-        if not (modifiers & Gdk.ModifierType.CONTROL_MASK):
+    def on_webview_scroll(self, webview, event):
+        if not (event.state & Gdk.ModifierType.CONTROL_MASK):
             return False  # let the page scroll normally
-        if dy < 0:
+        if event.direction == Gdk.ScrollDirection.UP:
             self.adjust_zoom(0.1)
-        elif dy > 0:
+        elif event.direction == Gdk.ScrollDirection.DOWN:
             self.adjust_zoom(-0.1)
+        elif event.direction == Gdk.ScrollDirection.SMOOTH:
+            _, delta_y = event.get_scroll_deltas()
+            if delta_y < 0:
+                self.adjust_zoom(0.1)
+            elif delta_y > 0:
+                self.adjust_zoom(-0.1)
         return True  # consume the event: don't also scroll/pinch-zoom the page
 
     def open_private_window(self):
@@ -1687,7 +1687,8 @@ class BharatBrowserWindow(Gtk.Window):
             "dev_tools_enabled": self.dev_tools_enabled,
             "webrtc_enabled": self.webrtc_enabled,
             "search_engine": self.search_engine,
-            "homepage": self.homepage
+            "homepage": self.homepage,
+            "open_homepage_on_startup": self.open_homepage_on_startup
         })
 
     def on_dark_clicked(self, btn):
@@ -1912,6 +1913,18 @@ class BharatBrowserWindow(Gtk.Window):
         btn_set_home.connect("clicked", lambda b: _apply_homepage(home_entry.get_text()))
         home_entry.connect("activate", lambda e: _apply_homepage(e.get_text()))
         btn_reset_home.connect("clicked", lambda b: _apply_homepage(DEFAULT_HOMEPAGE))
+
+        chk_homepage_startup = Gtk.CheckButton(label="🚀 Open homepage on startup")
+        chk_homepage_startup.set_tooltip_text(
+            "On: every launch opens your homepage.\n"
+            "Off (default): launch restores your previous tabs, same as before."
+        )
+        chk_homepage_startup.set_active(self.open_homepage_on_startup)
+        chk_homepage_startup.connect(
+            "toggled",
+            lambda cb: (setattr(self, 'open_homepage_on_startup', cb.get_active()), self.save_settings())
+        )
+        general_box.pack_start(chk_homepage_startup, False, False, 0)
 
         # --- Privacy & Security -----------------------------------------
         privacy_frame, privacy_box = self._settings_section("Privacy & Security")
