@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.15"
+VERSION="1.2.16"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,15 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.16-1
+- Fix Settings dialog scrolling being effectively unusable: the scroll area
+  was packed with content_area.add(), which does not give it expand/fill,
+  so it only ever got ~46px of height with the rest of the dialog left
+  empty below it. Packed explicitly with expand=True, fill=True instead.
+- Redesign Settings dialog sections as titled, bordered groups (General /
+  Privacy & Security / Advanced / Actions) instead of a bare bold label,
+  and grow the default dialog size so most setups need little to no
+  scrolling to see everything
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.15-1
 - Add a Default Search Engine setting (Google, Bing, DuckDuckGo, Yahoo) used
   by the address bar for non-URL input
