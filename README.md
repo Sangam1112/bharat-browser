@@ -169,6 +169,25 @@ Or launch **Bharat Browser** directly from your desktop application launcher men
 
 ---
 
+## 🩺 Resource Monitoring (for diagnosing memory/CPU reports)
+
+`tools/monitor-resources.py` is a standalone, dependency-free diagnostic
+script (developer tool, not part of the shipped packages) that tracks a
+running Bharat Browser's full process group — the main process plus every
+WebKit subprocess it spawns (WebProcess/NetworkProcess/GPU process) — and
+logs RSS memory and CPU% per process to a CSV file over time.
+
+```bash
+python3 tools/monitor-resources.py                # sample every 2s until Ctrl+C
+python3 tools/monitor-resources.py --interval 5 --duration 300 --output run.csv
+```
+
+Useful for reproducing and diagnosing real-world memory/"system overload"
+reports (e.g. this is how the v1.2.33 per-tab JavaScript CPU fixes were
+measured and verified).
+
+---
+
 ## 📄 License
 
 This project is licensed under the [MIT License](LICENSE).
