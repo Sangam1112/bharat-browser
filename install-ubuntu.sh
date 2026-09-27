@@ -46,7 +46,10 @@ echo "[1/4] Installing dependencies via apt..."
 $APT_PREFIX apt-get update
 $APT_PREFIX apt-get install -y python3 python3-gi python3-gi-cairo gir1.2-gtk-3.0 git
 
-# Ubuntu 24.04+ ships webkit2gtk 4.1; older releases only have 4.0.
+# gir1.2-webkit2-4.1 is the current package on 24.04, and was also
+# confirmed present via point-release updates on 22.04 (tested in a real
+# Ubuntu 22.04 container); fall back to the older gir1.2-webkit2-4.0 name
+# only if 4.1 genuinely isn't available.
 if apt-cache show gir1.2-webkit2-4.1 >/dev/null 2>&1; then
     $APT_PREFIX apt-get install -y gir1.2-webkit2-4.1
 else

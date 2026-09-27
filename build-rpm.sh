@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.29"
+VERSION="1.2.30"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,16 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.30-1
+- Verified the .deb package with real `apt install` runs inside actual
+  Ubuntu 22.04 and 24.04 containers (podman): full dependency resolution,
+  dpkg --verify passes, and the installed Python module imports cleanly
+  with real GTK3/WebKit2GTK bindings present
+- Fix stale "Ubuntu 24.04+ ships webkit2gtk 4.1; older releases only have
+  4.0" comments in install-ubuntu.sh/install-wsl.sh and README: 4.1 was
+  confirmed available on 22.04 too in real testing, so reworded to
+  describe the actual fallback behavior instead of a version cutoff
+  that turned out to be inaccurate
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.29-1
 - Add build-deb.sh and a shipped .deb package (bharat-browser_1.2.29-1_all.deb)
   for native `sudo apt install ./file.deb` installation on Ubuntu/Debian,

@@ -1,8 +1,8 @@
-# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.29
+# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.30
 
 > **Modern, Ultra-Fast, and Privacy-First Web Browser engineered for Linux (Fedora & Ubuntu)**
 
-[![Version](https://img.shields.io/badge/version-1.2.29-blue.svg)](https://github.com/Sangam1112/bharat-browser)
+[![Version](https://img.shields.io/badge/version-1.2.30-blue.svg)](https://github.com/Sangam1112/bharat-browser)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Fedora%20%7C%20Ubuntu%20%7C%20Linux-orange.svg)]()
 [![Privacy](https://img.shields.io/badge/privacy-Strict%20Enforcement-red.svg)]()
@@ -69,18 +69,18 @@ cd bharat-browser
 ./install-fedora.sh
 ```
 
-**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.29_fedora.tar.gz`)**
+**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.30_fedora.tar.gz`)**
 ```bash
 # 1. Extract the release archive
-tar -xzf bharat-browser_1.2.29_fedora.tar.gz -C /tmp/bharat_fedora
+tar -xzf bharat-browser_1.2.30_fedora.tar.gz -C /tmp/bharat_fedora
 
 # 2. Run installer script from archive
 cd /tmp/bharat_fedora && ./install-fedora.sh
 ```
 
-**Option C: Install the RPM directly (`bharat-browser-1.2.29-1.fc44.noarch.rpm`)**
+**Option C: Install the RPM directly (`bharat-browser-1.2.30-1.fc44.noarch.rpm`)**
 ```bash
-sudo dnf install ./bharat-browser-1.2.29-1.fc44.noarch.rpm
+sudo dnf install ./bharat-browser-1.2.30-1.fc44.noarch.rpm
 ```
 
 ### 🟠 Ubuntu / Debian Linux Installation
@@ -95,17 +95,18 @@ cd bharat-browser
 ./install-ubuntu.sh
 ```
 
-**Option B: Install the .deb directly (`bharat-browser_1.2.29-1_all.deb`)**
+**Option B: Install the .deb directly (`bharat-browser_1.2.30-1_all.deb`)**
 ```bash
-sudo apt install ./bharat-browser_1.2.29-1_all.deb
+sudo apt install ./bharat-browser_1.2.30-1_all.deb
 ```
 `apt install ./file.deb` (not `dpkg -i`) so `apt` resolves and installs
 the GTK3/WebKit2GTK dependencies automatically. This always installs
 system-wide to `/usr` — for a user-local install instead, use Option A.
 
 Option A's script installs the required GTK3/WebKit2GTK dependencies via `apt`
-(`gir1.2-webkit2-4.1` on Ubuntu 24.04+, `gir1.2-webkit2-4.0` on older
-releases — detected automatically), then installs the app itself:
+(`gir1.2-webkit2-4.1`, falling back to the older `gir1.2-webkit2-4.0` package
+name only if 4.1 isn't available — detected automatically; confirmed present
+on both Ubuntu 22.04 and 24.04 in real testing), then installs the app itself:
 
 * **Default (no flags):** installs to `~/.local` for the current user
   only — no `sudo` needed for this part.
