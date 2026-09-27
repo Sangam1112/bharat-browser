@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.27 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.28 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -485,7 +485,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.27"
+        self.current_version = "1.2.28"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -734,6 +734,11 @@ class BharatBrowserWindow(Gtk.Window):
         self.notebook = Gtk.Notebook()
         self.notebook.set_scrollable(True)
         self.notebook.set_show_border(False)
+        self.notebook.set_show_tabs(False)
+        # Hide the tab strip entirely with a single tab (nothing to switch
+        # between yet) and show it again as soon as there's a second one.
+        self.notebook.connect("page-added", self._update_tabs_visibility)
+        self.notebook.connect("page-removed", self._update_tabs_visibility)
         self.notebook.connect("switch-page", self.on_tab_changed)
         main_vbox.pack_start(self.notebook, True, True, 0)
 
@@ -1311,6 +1316,9 @@ class BharatBrowserWindow(Gtk.Window):
         if page_num != -1:
             return self.notebook.get_nth_page(page_num)
         return None
+
+    def _update_tabs_visibility(self, notebook, child=None, page_num=None):
+        notebook.set_show_tabs(notebook.get_n_pages() > 1)
 
     def on_tab_changed(self, notebook, page, page_num):
         if self.find_bar.get_visible():
