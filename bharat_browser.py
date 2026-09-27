@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.14 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.15 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -209,6 +209,39 @@ CONFIG_DIR = os.path.expanduser("~/.config/bharat-browser")
 CACHE_DIR = os.path.expanduser("~/.cache/bharat-browser")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "settings.json")
 SESSION_FILE = os.path.join(CONFIG_DIR, "session.json")
+
+SEARCH_ENGINES = {
+    "Google": "https://www.google.com/search?q={query}",
+    "Bing": "https://www.bing.com/search?q={query}",
+    "DuckDuckGo": "https://duckduckgo.com/?q={query}",
+    "Yahoo": "https://search.yahoo.com/search?p={query}",
+}
+DEFAULT_SEARCH_ENGINE = "Google"
+DEFAULT_HOMEPAGE = "https://www.google.com"
+
+
+def sanitize_homepage_url(url_str):
+    """Normalize/validate a user-supplied homepage URL. Rejects non-http(s)
+    schemes (javascript:, data:, file:, etc.) so a tampered or malformed
+    settings.json can't turn "every new tab" into a local code-execution or
+    disk-read primitive; falls back to DEFAULT_HOMEPAGE on anything invalid."""
+    if not url_str:
+        return DEFAULT_HOMEPAGE
+    candidate = url_str.strip()
+    if not candidate:
+        return DEFAULT_HOMEPAGE
+    parsed = urllib.parse.urlparse(candidate)
+    # Reject any explicit non-http(s) scheme (javascript:, data:, file:, etc.)
+    # up front, before the "no scheme -> assume bare domain" branch below can
+    # accidentally treat "javascript:alert(1)" as a hostname to prefix.
+    if parsed.scheme and parsed.scheme not in ("http", "https"):
+        return DEFAULT_HOMEPAGE
+    if not parsed.scheme:
+        candidate = "https://" + candidate
+        parsed = urllib.parse.urlparse(candidate)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return DEFAULT_HOMEPAGE
+    return candidate
 
 def load_persistent_settings():
     try:
@@ -427,7 +460,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.14"
+        self.current_version = "1.2.15"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -473,6 +506,10 @@ class BharatBrowserWindow(Gtk.Window):
         self.https_enabled = saved_settings.get("https_enabled", True)
         self.dev_tools_enabled = saved_settings.get("dev_tools_enabled", False)
         self.webrtc_enabled = saved_settings.get("webrtc_enabled", False)
+        self.search_engine = saved_settings.get("search_engine", DEFAULT_SEARCH_ENGINE)
+        if self.search_engine not in SEARCH_ENGINES:
+            self.search_engine = DEFAULT_SEARCH_ENGINE
+        self.homepage = sanitize_homepage_url(saved_settings.get("homepage", DEFAULT_HOMEPAGE))
 
         self.apply_custom_css()
 
@@ -594,7 +631,7 @@ class BharatBrowserWindow(Gtk.Window):
         self.btn_new_tab = Gtk.Button.new_from_icon_name("tab-new-symbolic", Gtk.IconSize.BUTTON)
         self.btn_new_tab.get_style_context().add_class("flat-icon-btn")
         self.btn_new_tab.set_tooltip_text("New Tab (Ctrl+T)")
-        self.btn_new_tab.connect("clicked", lambda b: self.create_new_tab("https://www.google.co.in"))
+        self.btn_new_tab.connect("clicked", lambda b: self.create_new_tab(self.homepage))
         top_bar.pack_start(self.btn_new_tab, False, False, 0)
 
         # Action Buttons (grouped)
@@ -707,14 +744,14 @@ class BharatBrowserWindow(Gtk.Window):
         # Restore Session or Open Initial Tab (private windows never read or
         # write session.json, so no private URL ever touches disk)
         if self.is_private:
-            initial_urls = ["https://www.google.co.in"]
+            initial_urls = [self.homepage]
         else:
             saved_session = load_session_state()
             initial_urls = saved_session.get("urls", [])
             if isinstance(initial_urls, str):
                 initial_urls = [initial_urls]
             if not initial_urls:
-                initial_urls = ["https://www.google.co.in"]
+                initial_urls = [self.homepage]
 
         for url in initial_urls:
             self.create_new_tab(url)
@@ -1000,7 +1037,7 @@ class BharatBrowserWindow(Gtk.Window):
         dialog.set_titlebar(titlebar)
 
     # Multi-Tab Architecture Helper Methods
-    def create_new_tab(self, url="https://www.google.co.in", webview=None):
+    def create_new_tab(self, url=None, webview=None):
         tab_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
         # webview is only pre-supplied for popups/target="_blank" links via
@@ -1060,7 +1097,7 @@ class BharatBrowserWindow(Gtk.Window):
         self.notebook.set_current_page(page_num)
 
         if load_initial_uri:
-            webview.load_uri(url)
+            webview.load_uri(url or self.homepage)
         return webview
 
     def on_create_webview(self, webview, navigation_action):
@@ -1075,7 +1112,7 @@ class BharatBrowserWindow(Gtk.Window):
         if page_num != -1:
             self.notebook.remove_page(page_num)
         if self.notebook.get_n_pages() == 0:
-            self.create_new_tab("https://www.google.co.in")
+            self.create_new_tab(self.homepage)
 
     def get_active_webview(self):
         page_num = self.notebook.get_current_page()
@@ -1133,7 +1170,7 @@ class BharatBrowserWindow(Gtk.Window):
             GLib.idle_add(lambda: webview.load_html(error_html, None))
             return
 
-        uri = webview.get_uri() or "https://www.google.co.in"
+        uri = webview.get_uri() or self.homepage
         GLib.idle_add(lambda: webview.load_uri(uri))
         self.statusbar.push(self.context_id, "⚠️ Web process recovered automatically.")
 
@@ -1169,7 +1206,7 @@ class BharatBrowserWindow(Gtk.Window):
                 self.open_private_window()
                 return True
             elif keyval in (Gdk.KEY_t, Gdk.KEY_T):
-                self.create_new_tab("https://www.google.co.in")
+                self.create_new_tab(self.homepage)
                 return True
             elif keyval in (Gdk.KEY_w, Gdk.KEY_W):
                 active_box = self.get_active_tab_box()
@@ -1491,7 +1528,8 @@ class BharatBrowserWindow(Gtk.Window):
                 scheme = "http://" if is_local_network_host(host_candidate) else "https://"
                 text = scheme + text
             else:
-                text = f"https://www.google.com/search?q={urllib.parse.quote(text)}"
+                template = SEARCH_ENGINES.get(self.search_engine, SEARCH_ENGINES[DEFAULT_SEARCH_ENGINE])
+                text = template.format(query=urllib.parse.quote(text))
 
         webview = self.get_active_webview()
         if webview:
@@ -1558,7 +1596,9 @@ class BharatBrowserWindow(Gtk.Window):
             "clearurls_enabled": self.clearurls_enabled,
             "https_enabled": self.https_enabled,
             "dev_tools_enabled": self.dev_tools_enabled,
-            "webrtc_enabled": self.webrtc_enabled
+            "webrtc_enabled": self.webrtc_enabled,
+            "search_engine": self.search_engine,
+            "homepage": self.homepage
         })
 
     def on_dark_clicked(self, btn):
@@ -1663,6 +1703,13 @@ class BharatBrowserWindow(Gtk.Window):
         except Exception as e:
             self.statusbar.push(self.context_id, f"❌ Screenshot failed: {str(e)}")
 
+    @staticmethod
+    def _settings_section_label(text):
+        lbl = Gtk.Label(xalign=0.0)
+        lbl.set_markup(f"<b>{GLib.markup_escape_text(text)}</b>")
+        lbl.get_style_context().add_class("settings-section-label")
+        return lbl
+
     def on_settings_clicked(self, btn):
         title_text = f"Browser Settings & Extensions (v{self.current_version})"
         dialog = Gtk.Dialog(
@@ -1674,32 +1721,100 @@ class BharatBrowserWindow(Gtk.Window):
         dialog.get_style_context().add_class("bharat-dialog")
         self.apply_dark_titlebar(dialog, title_text)
         dialog.add_button("Close", Gtk.ResponseType.CLOSE)
-        dialog.set_default_size(480, 360)
+        dialog.set_default_size(500, 560)
 
         content_area = dialog.get_content_area()
-        content_area.set_margin_start(16)
-        content_area.set_margin_end(16)
-        content_area.set_margin_top(16)
-        content_area.set_margin_bottom(16)
+        content_area.set_margin_start(0)
+        content_area.set_margin_end(0)
+        content_area.set_margin_top(0)
+        content_area.set_margin_bottom(0)
 
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        content_area.add(vbox)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        content_area.add(scroller)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        vbox.set_margin_start(18)
+        vbox.set_margin_end(18)
+        vbox.set_margin_top(16)
+        vbox.set_margin_bottom(16)
+        scroller.add(vbox)
 
         title_lbl = Gtk.Label(label=f"⚙️ Bharat Browser Settings (v{self.current_version})")
         title_lbl.get_style_context().add_class("brand-label")
         vbox.pack_start(title_lbl, False, False, 0)
+        vbox.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 6)
+
+        # --- General ---------------------------------------------------
+        vbox.pack_start(self._settings_section_label("General"), False, False, 0)
+
+        search_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        search_lbl = Gtk.Label(label="🔍 Search engine")
+        search_lbl.set_size_request(150, -1)
+        search_lbl.set_xalign(0.0)
+        search_box.pack_start(search_lbl, False, False, 0)
+        search_combo = Gtk.ComboBoxText()
+        search_combo.set_tooltip_text("Used when you type a search term (not a web address) into the address bar.")
+        for engine_name in SEARCH_ENGINES:
+            search_combo.append_text(engine_name)
+        search_combo.set_active(list(SEARCH_ENGINES.keys()).index(self.search_engine))
+        search_combo.connect("changed", lambda cb: (setattr(self, 'search_engine', cb.get_active_text()), self.save_settings()))
+        search_box.pack_start(search_combo, True, True, 0)
+        vbox.pack_start(search_box, False, False, 4)
+
+        home_lbl = Gtk.Label(label="🏠 Homepage", xalign=0.0)
+        home_lbl.set_tooltip_text("Opened by new tabs (Ctrl+T), the New Tab button, and when the last tab closes.")
+        vbox.pack_start(home_lbl, False, False, 0)
+
+        home_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        home_entry = Gtk.Entry()
+        home_entry.set_text(self.homepage)
+        home_entry.set_placeholder_text("e.g. example.com or https://example.com")
+        home_entry.set_hexpand(True)
+        home_box.pack_start(home_entry, True, True, 0)
+
+        btn_set_home = Gtk.Button(label="Set")
+        btn_set_home.set_tooltip_text("Save this address as your homepage")
+        home_box.pack_start(btn_set_home, False, False, 0)
+
+        btn_reset_home = Gtk.Button(label="Use Google")
+        btn_reset_home.set_tooltip_text(f"Reset homepage to {DEFAULT_HOMEPAGE}")
+        home_box.pack_start(btn_reset_home, False, False, 0)
+        vbox.pack_start(home_box, False, False, 0)
+
+        home_status = Gtk.Label(xalign=0.0)
+        home_status.get_style_context().add_class("settings-hint-label")
+        vbox.pack_start(home_status, False, False, 0)
+
+        def _apply_homepage(new_value):
+            self.homepage = sanitize_homepage_url(new_value)
+            home_entry.set_text(self.homepage)
+            self.save_settings()
+            home_status.set_text(f"✅ Homepage set to {self.homepage}")
+            GLib.timeout_add(3000, lambda: (home_status.set_text(""), False)[1])
+
+        btn_set_home.connect("clicked", lambda b: _apply_homepage(home_entry.get_text()))
+        home_entry.connect("activate", lambda e: _apply_homepage(e.get_text()))
+        btn_reset_home.connect("clicked", lambda b: _apply_homepage(DEFAULT_HOMEPAGE))
+
+        vbox.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 6)
+
+        # --- Privacy & Security -----------------------------------------
+        vbox.pack_start(self._settings_section_label("Privacy & Security"), False, False, 0)
 
         chk_dark = Gtk.CheckButton(label="🌙 DarkReader Engine (High-Contrast Webpages)")
         chk_dark.set_active(self.dark_mode_active)
         chk_dark.connect("toggled", lambda cb: self.on_dark_clicked(self.btn_dark))
         vbox.pack_start(chk_dark, False, False, 0)
 
-        chk_adblock = Gtk.CheckButton(label="🛡️ uBlock & Privacy Badger (2-Stage Blocker)")
+        chk_adblock = Gtk.CheckButton(label="🛡️ Ad & Tracker Blocking")
+        chk_adblock.set_tooltip_text("Blocks known ad/tracker domains using a built-in blocklist.")
         chk_adblock.set_active(self.adblock_enabled)
         chk_adblock.connect("toggled", lambda cb: (setattr(self, 'adblock_enabled', cb.get_active()), self.save_settings()))
         vbox.pack_start(chk_adblock, False, False, 0)
 
-        chk_clearurls = Gtk.CheckButton(label="🔗 ClearURLs Tracking Parameter Stripper")
+        chk_clearurls = Gtk.CheckButton(label="🔗 Strip Tracking Parameters from URLs")
+        chk_clearurls.set_tooltip_text("Removes utm_*, fbclid, gclid, and similar tracking parameters before navigating.")
         chk_clearurls.set_active(self.clearurls_enabled)
         chk_clearurls.connect("toggled", lambda cb: (setattr(self, 'clearurls_enabled', cb.get_active()), self.save_settings()))
         vbox.pack_start(chk_clearurls, False, False, 0)
@@ -1709,15 +1824,26 @@ class BharatBrowserWindow(Gtk.Window):
         chk_https.connect("toggled", lambda cb: (setattr(self, 'https_enabled', cb.get_active()), self.save_settings()))
         vbox.pack_start(chk_https, False, False, 0)
 
-        chk_webrtc = Gtk.CheckButton(label="🎥 WebRTC / Camera & Mic (off by default — can leak local IP)")
+        chk_webrtc = Gtk.CheckButton(label="🎥 WebRTC / Camera & Mic")
+        chk_webrtc.set_tooltip_text("Off by default — WebRTC can leak your local network IP address even behind a VPN.")
         chk_webrtc.set_active(self.webrtc_enabled)
         chk_webrtc.connect("toggled", lambda cb: self.on_webrtc_toggled(cb.get_active()))
         vbox.pack_start(chk_webrtc, False, False, 0)
+
+        vbox.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 6)
+
+        # --- Advanced ----------------------------------------------------
+        vbox.pack_start(self._settings_section_label("Advanced"), False, False, 0)
 
         chk_devtools = Gtk.CheckButton(label="🛠️ Developer Tools (Web Inspector)")
         chk_devtools.set_active(self.dev_tools_enabled)
         chk_devtools.connect("toggled", lambda cb: self.on_devtools_toggled(cb.get_active()))
         vbox.pack_start(chk_devtools, False, False, 0)
+
+        vbox.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 6)
+
+        # --- Actions -------------------------------------------------------
+        vbox.pack_start(self._settings_section_label("Actions"), False, False, 0)
 
         btn_clear = Gtk.Button(label="🗑️ Clear Browsing History & Cookies")
         btn_clear.connect("clicked", self.on_clear_cache_clicked)

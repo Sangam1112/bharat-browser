@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.14"
+VERSION="1.2.15"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,14 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.15-1
+- Add a Default Search Engine setting (Google, Bing, DuckDuckGo, Yahoo) used
+  by the address bar for non-URL input
+- Add a Homepage setting: opened by new tabs, the New Tab button, and when
+  the last tab closes; supports a custom address with input validation
+  (non-http(s) schemes like javascript:/data:/file: are rejected)
+- Redesign the Settings dialog into General / Privacy & Security / Advanced
+  / Actions sections with tooltips and a scrollable layout, for readability
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.14-1
 - Fix screenshot feature failing to save: WebKit's page snapshot carries an
   alpha channel, and some gdk-pixbuf JPEG backends (e.g. glycin on newer
