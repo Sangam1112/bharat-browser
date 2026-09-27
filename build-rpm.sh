@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.32"
+VERSION="1.2.33"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,18 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.33-1
+- Fix two real CPU/performance issues in the per-tab injected scripts,
+  investigated after a user reported memory/system-overload issues on
+  Ubuntu: (1) the link-prefetch mouseover handler ran a document.
+  querySelector() DOM scan on every single hover event, even re-hovering
+  the same link, and let <head> grow unboundedly on link-heavy pages —
+  now uses an in-memory Set (no DOM query) and caps at 30 origins;
+  (2) the media-polyfill's MutationObserver ran a full document.
+  querySelectorAll('video') scan on every DOM mutation batch — confirmed
+  via testing that independent page updates (live feeds, ad refreshes,
+  chat widgets) each trigger a separate callback and separate full-page
+  scan — now only inspects each mutation's newly-added nodes
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.32-1
 - Fix opening .doc/.docx/.xls/.xlsx (and any other file type WebKit has no
   in-tab renderer for) showing a confusing "page didn't load" error after

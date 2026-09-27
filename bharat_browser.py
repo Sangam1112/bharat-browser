@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.32 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.33 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -364,27 +364,36 @@ PREFETCH_USER_SCRIPT = """
     if (window.__bharat_prefetch_listener__) return;
     window.__bharat_prefetch_listener__ = true;
 
+    // mouseover bubbles from every element the pointer crosses (including
+    // deeply nested children of a link), so this can fire hundreds of times
+    // per second while the mouse moves over a link-dense page. The previous
+    // version ran document.querySelector() — a DOM scan that gets slower as
+    // more prefetch <link> tags accumulate — on every single firing, even
+    // when re-hovering the exact same link. Track already-seen origins in
+    // memory instead (O(1), no DOM query at all on repeat hovers), and cap
+    // how many distinct origins get a <link> added so a long session on a
+    // link-heavy page can't grow <head> unboundedly.
+    const seenOrigins = new Set();
+    const MAX_PREFETCH_ORIGINS = 30;
+
     function prefetchLink(e) {
         try {
-            let target = e.target;
-            while (target && target.tagName !== 'A') {
-                target = target.parentElement;
-            }
-            if (target && target.href && target.href.startsWith('http')) {
-                const url = new URL(target.href);
-                const origin = url.origin;
-                if (!document.querySelector(`link[rel="dns-prefetch"][href="${origin}"]`)) {
-                    const dnsLink = document.createElement('link');
-                    dnsLink.rel = 'dns-prefetch';
-                    dnsLink.href = origin;
-                    document.head.appendChild(dnsLink);
+            const target = e.target.closest && e.target.closest('a[href^="http"]');
+            if (!target) return;
+            const origin = new URL(target.href).origin;
+            if (seenOrigins.has(origin)) return;
+            if (seenOrigins.size >= MAX_PREFETCH_ORIGINS) return;
+            seenOrigins.add(origin);
 
-                    const connLink = document.createElement('link');
-                    connLink.rel = 'preconnect';
-                    connLink.href = origin;
-                    document.head.appendChild(connLink);
-                }
-            }
+            const dnsLink = document.createElement('link');
+            dnsLink.rel = 'dns-prefetch';
+            dnsLink.href = origin;
+            document.head.appendChild(dnsLink);
+
+            const connLink = document.createElement('link');
+            connLink.rel = 'preconnect';
+            connLink.href = origin;
+            document.head.appendChild(connLink);
         } catch(err){}
     }
 
@@ -454,15 +463,16 @@ MEDIA_POLYFILL_JS = """
         };
     }
 
+    function boostVideo(v) {
+        if (!v.__bharat_boosted__) {
+            v.__bharat_boosted__ = true;
+            v.preload = 'auto';
+        }
+    }
+
     function optimizeVideoElements() {
         try {
-            const videos = document.querySelectorAll('video');
-            videos.forEach(v => {
-                if (!v.__bharat_boosted__) {
-                    v.__bharat_boosted__ = true;
-                    v.preload = 'auto';
-                }
-            });
+            document.querySelectorAll('video').forEach(boostVideo);
         } catch(e){}
     }
 
@@ -475,9 +485,30 @@ MEDIA_POLYFILL_JS = """
     // Event-driven instead of a 1500ms poll loop running forever in every
     // open tab: react only when the DOM actually changes (new <video> added
     // by the page's own JS/SPA routing), which is the only time there's
-    // new work to do anyway.
+    // new work to do anyway. Only inspect each mutation's addedNodes (and
+    // their subtrees), not a full document.querySelectorAll('video') scan
+    // on every single mutation batch: on a page that mutates independently
+    // and often (live feeds, ad refreshes, chat widgets — confirmed via
+    // testing that each separate update triggers its own callback, not one
+    // shared batch), a full-document rescan on every one of those is a real,
+    // measurable, and entirely avoidable CPU cost that scales with page size.
+    function handleMutations(mutationsList) {
+        try {
+            for (const mutation of mutationsList) {
+                for (const node of mutation.addedNodes) {
+                    if (node.nodeType !== 1) continue;
+                    if (node.tagName === 'VIDEO') {
+                        boostVideo(node);
+                    } else if (node.querySelectorAll) {
+                        node.querySelectorAll('video').forEach(boostVideo);
+                    }
+                }
+            }
+        } catch(e){}
+    }
+
     try {
-        const observer = new MutationObserver(optimizeVideoElements);
+        const observer = new MutationObserver(handleMutations);
         observer.observe(document.documentElement || document, { childList: true, subtree: true });
     } catch(e){}
 })();
@@ -485,7 +516,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.32"
+        self.current_version = "1.2.33"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")

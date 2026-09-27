@@ -1,8 +1,8 @@
-# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.32
+# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.33
 
 > **Modern, Ultra-Fast, and Privacy-First Web Browser engineered for Linux (Fedora & Ubuntu)**
 
-[![Version](https://img.shields.io/badge/version-1.2.32-blue.svg)](https://github.com/Sangam1112/bharat-browser)
+[![Version](https://img.shields.io/badge/version-1.2.33-blue.svg)](https://github.com/Sangam1112/bharat-browser)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Fedora%20%7C%20Ubuntu%20%7C%20Linux-orange.svg)]()
 [![Privacy](https://img.shields.io/badge/privacy-Strict%20Enforcement-red.svg)]()
@@ -70,18 +70,18 @@ cd bharat-browser
 ./install-fedora.sh
 ```
 
-**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.32_fedora.tar.gz`)**
+**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.33_fedora.tar.gz`)**
 ```bash
 # 1. Extract the release archive
-tar -xzf bharat-browser_1.2.32_fedora.tar.gz -C /tmp/bharat_fedora
+tar -xzf bharat-browser_1.2.33_fedora.tar.gz -C /tmp/bharat_fedora
 
 # 2. Run installer script from archive
 cd /tmp/bharat_fedora && ./install-fedora.sh
 ```
 
-**Option C: Install the RPM directly (`bharat-browser-1.2.32-1.fc44.noarch.rpm`)**
+**Option C: Install the RPM directly (`bharat-browser-1.2.33-1.fc44.noarch.rpm`)**
 ```bash
-sudo dnf install ./bharat-browser-1.2.32-1.fc44.noarch.rpm
+sudo dnf install ./bharat-browser-1.2.33-1.fc44.noarch.rpm
 ```
 
 ### 🟠 Ubuntu / Debian Linux Installation
@@ -96,9 +96,9 @@ cd bharat-browser
 ./install-ubuntu.sh
 ```
 
-**Option B: Install the .deb directly (`bharat-browser_1.2.32-1_all.deb`)**
+**Option B: Install the .deb directly (`bharat-browser_1.2.33-1_all.deb`)**
 ```bash
-sudo apt install ./bharat-browser_1.2.32-1_all.deb
+sudo apt install ./bharat-browser_1.2.33-1_all.deb
 ```
 `apt install ./file.deb` (not `dpkg -i`) so `apt` resolves and installs
 the GTK3/WebKit2GTK dependencies automatically. This always installs
