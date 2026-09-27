@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.13"
+VERSION="1.2.14"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,15 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.14-1
+- Fix screenshot feature failing to save: WebKit's page snapshot carries an
+  alpha channel, and some gdk-pixbuf JPEG backends (e.g. glycin on newer
+  Fedora/GNOME) refuse to encode RGBA as JPEG; the snapshot is now flattened
+  onto an opaque background before saving
+- Fix links that open in a new tab/window (target="_blank", window.open(),
+  middle-click, OAuth/"Sign in with..." popups) silently doing nothing;
+  the browser now handles WebKit's "create" signal and opens them in a new
+  tab in the same window
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.13-1
 - Fix Settings/Downloads dialogs still showing a light system-themed title
   bar despite the dark content area fix in 1.2.12: they now get the same

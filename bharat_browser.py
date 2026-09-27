@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.13 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.14 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -427,7 +427,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.13"
+        self.current_version = "1.2.14"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -1000,10 +1000,15 @@ class BharatBrowserWindow(Gtk.Window):
         dialog.set_titlebar(titlebar)
 
     # Multi-Tab Architecture Helper Methods
-    def create_new_tab(self, url="https://www.google.co.in"):
+    def create_new_tab(self, url="https://www.google.co.in", webview=None):
         tab_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        
-        webview = WebKit2.WebView.new_with_context(self.context)
+
+        # webview is only pre-supplied for popups/target="_blank" links via
+        # on_create_webview(), which must hand WebKit a related WebView
+        # rather than an independent one for the navigation to go through.
+        load_initial_uri = webview is None
+        if webview is None:
+            webview = WebKit2.WebView.new_with_context(self.context)
         webview.set_settings(self.web_settings)
 
         # Inject UserScripts
@@ -1024,6 +1029,10 @@ class BharatBrowserWindow(Gtk.Window):
         webview.connect("web-process-terminated", self.on_web_process_terminated)
         webview.connect("permission-request", self.on_permission_request)
         webview.connect("load-failed-with-tls-errors", self.on_load_failed_with_tls_errors)
+        # Without this, WebKit silently drops any navigation that wants a new
+        # window/tab (target="_blank", window.open(), middle-click, OAuth
+        # popups, etc.) instead of doing anything visible.
+        webview.connect("create", self.on_create_webview)
 
         tab_box.pack_start(webview, True, True, 0)
         tab_box.show_all()
@@ -1050,8 +1059,14 @@ class BharatBrowserWindow(Gtk.Window):
         self.notebook.set_tab_reorderable(tab_box, True)
         self.notebook.set_current_page(page_num)
 
-        webview.load_uri(url)
+        if load_initial_uri:
+            webview.load_uri(url)
         return webview
+
+    def on_create_webview(self, webview, navigation_action):
+        related_webview = WebKit2.WebView.new_with_related_view(webview)
+        self.create_new_tab(webview=related_webview)
+        return related_webview
 
     def close_tab(self, tab_box):
         if hasattr(tab_box, '_bharat_webview'):
