@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.22 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.23 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -484,7 +484,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.22"
+        self.current_version = "1.2.23"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -523,6 +523,7 @@ class BharatBrowserWindow(Gtk.Window):
         self.downloads_history = []
         self._crash_counts = {}
         self._load_failure_counts = {}
+        self._page_view_start = {}
 
         saved_settings = load_persistent_settings()
         self.dark_mode_active = saved_settings.get("dark_mode", False)
@@ -864,6 +865,7 @@ class BharatBrowserWindow(Gtk.Window):
 
         # Keybindings (Ctrl+T, Ctrl+W, Ctrl+R)
         self.connect("key-press-event", self.on_key_press)
+        self.connect("destroy", self.on_window_destroy)
 
         # Trigger Git Update Check after 30 sec (only the main window checks;
         # private windows shouldn't trip network activity or restart the app)
@@ -1273,10 +1275,17 @@ class BharatBrowserWindow(Gtk.Window):
         self.create_new_tab(webview=related_webview)
         return related_webview
 
+    def on_window_destroy(self, window):
+        for i in range(self.notebook.get_n_pages()):
+            tab_box = self.notebook.get_nth_page(i)
+            if hasattr(tab_box, '_bharat_webview'):
+                self._flush_page_view(tab_box._bharat_webview)
+
     def close_tab(self, tab_box):
         if hasattr(tab_box, '_bharat_webview'):
             self._crash_counts.pop(id(tab_box._bharat_webview), None)
             self._load_failure_counts.pop(id(tab_box._bharat_webview), None)
+            self._flush_page_view(tab_box._bharat_webview)
         page_num = self.notebook.page_num(tab_box)
         if page_num != -1:
             self.notebook.remove_page(page_num)
@@ -1440,6 +1449,9 @@ class BharatBrowserWindow(Gtk.Window):
                 return True
             elif keyval in (Gdk.KEY_f, Gdk.KEY_F):
                 self.open_find_bar()
+                return True
+            elif keyval in (Gdk.KEY_h, Gdk.KEY_H):
+                self.open_history_tab()
                 return True
         elif event.keyval == Gdk.KEY_Escape and self.find_bar.get_visible():
             self.close_find_bar()
@@ -1861,21 +1873,146 @@ class BharatBrowserWindow(Gtk.Window):
         return True
 
     def record_history_entry(self, url, title):
-        """Add/refresh a URL-bar autocomplete entry. Guards is_private itself
-        (not just at the on_load_changed call site) so no future call path
-        can accidentally write private-window browsing to disk."""
+        """Add/refresh a URL-bar autocomplete + history-dashboard entry.
+        Guards is_private itself (not just at the on_load_changed call site)
+        so no future call path can accidentally write private-window
+        browsing to disk. Preserves accumulated time-on-page and visit
+        count across re-visits instead of resetting them."""
         if self.is_private:
             return
         if not url or url.startswith("about:"):
             return
+        existing = next((e for e in self.url_history if e.get("url") == url), None)
+        total_seconds = existing.get("total_seconds", 0.0) if existing else 0.0
+        visits = existing.get("visits", 0) + 1 if existing else 1
         self.url_history = [e for e in self.url_history if e.get("url") != url]
-        self.url_history.insert(0, {"url": url, "title": title or url})
+        self.url_history.insert(0, {
+            "url": url,
+            "title": title or url,
+            "total_seconds": total_seconds,
+            "visits": visits,
+            "last_visited": time.time(),
+        })
         del self.url_history[HISTORY_MAX_ENTRIES:]
         save_url_history(self.url_history)
 
         self.url_completion_store.clear()
         for entry in self.url_history:
             self.url_completion_store.append([entry.get("url", ""), entry.get("title", "")])
+
+    def _start_page_view(self, webview, url):
+        if self.is_private or not url or url.startswith("about:"):
+            return
+        self._page_view_start[id(webview)] = (url, time.monotonic())
+
+    def _flush_page_view(self, webview):
+        """Add elapsed time on the page this webview was previously showing
+        to that URL's running total. Called when the tab navigates to a new
+        page, closes, or the window closes, so time-on-page is captured
+        without needing to track focus/visibility precisely."""
+        entry = self._page_view_start.pop(id(webview), None)
+        if not entry or self.is_private:
+            return
+        url, start = entry
+        elapsed = time.monotonic() - start
+        if elapsed < 0.5:
+            return  # ignore instant navigations (redirects, typos, etc.)
+        for hist_entry in self.url_history:
+            if hist_entry.get("url") == url:
+                hist_entry["total_seconds"] = hist_entry.get("total_seconds", 0.0) + elapsed
+                save_url_history(self.url_history)
+                return
+
+    @staticmethod
+    def _format_duration(seconds):
+        seconds = int(seconds)
+        h, rem = divmod(seconds, 3600)
+        m, s = divmod(rem, 60)
+        if h:
+            return f"{h}h {m}m"
+        if m:
+            return f"{m}m {s}s"
+        return f"{s}s"
+
+    def build_history_dashboard_html(self):
+        rows_html = ""
+        entries = sorted(self.url_history, key=lambda e: e.get("total_seconds", 0.0), reverse=True)
+        total_seconds_all = sum(e.get("total_seconds", 0.0) for e in entries)
+        total_visits_all = sum(e.get("visits", 0) for e in entries)
+
+        for entry in entries:
+            url = entry.get("url", "")
+            title = entry.get("title") or url
+            domain = urllib.parse.urlparse(url).hostname or url
+            duration = self._format_duration(entry.get("total_seconds", 0.0))
+            visits = entry.get("visits", 0)
+            last_visited = entry.get("last_visited")
+            last_visited_str = (
+                GLib.DateTime.new_from_unix_local(int(last_visited)).format("%d %b %Y, %H:%M")
+                if last_visited else "—"
+            )
+            rows_html += f"""
+            <tr onclick="window.location.href='{GLib.markup_escape_text(url)}'">
+                <td class="title-cell">
+                    <div class="title">{GLib.markup_escape_text(title)}</div>
+                    <div class="domain">{GLib.markup_escape_text(domain)}</div>
+                </td>
+                <td class="num-cell">{duration}</td>
+                <td class="num-cell">{visits}</td>
+                <td class="num-cell muted">{last_visited_str}</td>
+            </tr>"""
+
+        if not entries:
+            rows_html = """
+            <tr><td colspan="4" class="empty-state">No browsing history yet.</td></tr>"""
+
+        return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>History — Bharat Browser</title>
+<style>
+    body {{ background: #0b0e14; color: #f8fafc; font-family: -apple-system, 'Segoe UI', sans-serif;
+            margin: 0; padding: 32px 40px; }}
+    h1 {{ font-size: 22px; margin: 0 0 4px 0; }}
+    .subtitle {{ color: #94a3b8; font-size: 13px; margin-bottom: 24px; }}
+    .stats {{ display: flex; gap: 16px; margin-bottom: 28px; }}
+    .stat-card {{ background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
+                  border-radius: 10px; padding: 14px 20px; }}
+    .stat-value {{ font-size: 20px; font-weight: 700; color: #93c5fd; }}
+    .stat-label {{ font-size: 12px; color: #94a3b8; }}
+    table {{ width: 100%; border-collapse: collapse; }}
+    thead th {{ text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+                color: #64748b; padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.12); }}
+    tbody tr {{ cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.06); }}
+    tbody tr:hover {{ background: rgba(99,102,241,0.1); }}
+    td {{ padding: 12px; vertical-align: middle; }}
+    .title-cell .title {{ font-weight: 600; font-size: 14px; }}
+    .title-cell .domain {{ font-size: 12px; color: #64748b; margin-top: 2px; }}
+    .num-cell {{ text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }}
+    .num-cell.muted {{ color: #94a3b8; font-size: 13px; }}
+    .empty-state {{ text-align: center; color: #64748b; padding: 60px 0; }}
+</style></head>
+<body>
+    <h1>📊 Browsing History</h1>
+    <div class="subtitle">Sites ranked by time spent, most-visited-in-time first.</div>
+    <div class="stats">
+        <div class="stat-card"><div class="stat-value">{len(entries)}</div><div class="stat-label">Sites tracked</div></div>
+        <div class="stat-card"><div class="stat-value">{self._format_duration(total_seconds_all)}</div><div class="stat-label">Total time tracked</div></div>
+        <div class="stat-card"><div class="stat-value">{total_visits_all}</div><div class="stat-label">Total visits</div></div>
+    </div>
+    <table>
+        <thead><tr><th>Site</th><th style="text-align:right">Time Spent</th><th style="text-align:right">Visits</th><th style="text-align:right">Last Visited</th></tr></thead>
+        <tbody>{rows_html}</tbody>
+    </table>
+</body></html>"""
+
+    def open_history_tab(self):
+        webview = self.create_new_tab(url="about:blank")
+        html = self.build_history_dashboard_html()
+        # A fake base URI here (e.g. "about:history") gets treated as a real
+        # navigation target and fails to load, which — now that load-failed
+        # triggers our own retry/error-page handling — replaced this page
+        # with the "didn't load" error page instead of the dashboard. None
+        # is what the existing crash-error page uses for the same reason.
+        GLib.idle_add(lambda: webview.load_html(html, None))
 
     def on_back_clicked(self, btn):
         webview = self.get_active_webview()
@@ -1935,7 +2072,9 @@ class BharatBrowserWindow(Gtk.Window):
                 if urls:
                     save_session_state(urls)
 
+                self._flush_page_view(webview)
                 self.record_history_entry(uri, title)
+                self._start_page_view(webview, uri)
 
             # Injections
             if self.dark_mode_active:
@@ -2234,6 +2373,11 @@ class BharatBrowserWindow(Gtk.Window):
         actions_frame, actions_box = self._settings_section("Actions")
         vbox.pack_start(actions_frame, False, False, 0)
 
+        btn_history = Gtk.Button(label="📊 Show History")
+        btn_history.set_tooltip_text("Ctrl+H")
+        btn_history.connect("clicked", lambda b: (self.open_history_tab(), dialog.destroy()))
+        actions_box.pack_start(btn_history, False, False, 0)
+
         btn_clear = Gtk.Button(label="🗑️ Clear Browsing History & Cookies")
         btn_clear.connect("clicked", self.on_clear_cache_clicked)
         actions_box.pack_start(btn_clear, False, False, 0)
@@ -2308,6 +2452,12 @@ class BharatBrowserWindow(Gtk.Window):
                 pass
 
         self.context.clear_cache()
+
+        self.url_history = []
+        save_url_history(self.url_history)
+        self.url_completion_store.clear()
+        self._page_view_start.clear()
+
         self.statusbar.push(self.context_id, "🧹 Browsing History & Cache Cleared!")
 
         dialog = Gtk.MessageDialog(

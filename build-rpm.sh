@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.22"
+VERSION="1.2.23"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,15 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.23-1
+- Add a browsing history dashboard: Ctrl+H or Settings > Actions > "Show
+  History" opens a new tab ranking visited sites by time spent, with
+  visit counts and last-visited timestamps
+- Time-on-page is now tracked per site (from page load to navigating
+  away, closing the tab, or closing the window) and persisted alongside
+  existing URL-bar autocomplete history; never tracked in private windows
+- "Clear Browsing History & Cookies" now also clears this history data,
+  not just WebKit's cache/cookies as before
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.22-1
 - Add graceful handling for network-level load failures (e.g. "Peer failed
   to perform TLS handshake: Connection reset by peer"), previously shown
