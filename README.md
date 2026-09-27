@@ -72,13 +72,37 @@ cd /tmp/bharat_fedora && ./install-fedora.sh
 sudo dnf install ./bharat-browser-1.2.13-1.fc44.noarch.rpm
 ```
 
-### 🪟 WSL2 / Windows 11 Installation
+### 🪟 How to run on Windows 10/11
 
+Bharat Browser is a GTK3 + WebKit2GTK app with no native Windows build, so
+on Windows it runs inside **WSL2**, using **WSLg** to display the app as its
+own window on the Windows desktop (no separate VM window, no X server setup).
+
+> WSLg (and this flow) requires Windows 10 build 19044+ or Windows 11.
+
+**Step 1 — One-time WSL2 setup (run in PowerShell, not inside Linux):**
+```powershell
+wsl --install -d Ubuntu
+```
+Reboot if prompted, then open **Ubuntu** from the Start menu once to finish
+first-run setup (pick a username/password).
+
+**Step 2 — Install Bharat Browser (run inside the Ubuntu/WSL terminal):**
 ```bash
 git clone https://github.com/Sangam1112/bharat-browser.git
 cd bharat-browser
 ./install-wsl.sh
 ```
+This installs the required GTK3/WebKit2GTK dependencies via `apt` and sets
+up a `bharat-browser` command.
+
+**Step 3 — Launch it:**
+```bash
+bharat-browser
+```
+The browser opens as its own window directly on your Windows 10/11 desktop
+via WSLg. If the command isn't found in new terminals, add
+`export PATH="$HOME/.local/bin:$PATH"` to `~/.bashrc`.
 
 ---
 
