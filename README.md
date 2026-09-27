@@ -1,17 +1,17 @@
 # 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.13
 
-> **Modern, Ultra-Fast, and Privacy-First Web Browser engineered for Linux (Ubuntu)**
+> **Modern, Ultra-Fast, and Privacy-First Web Browser engineered for Linux (Fedora)**
 
 [![Version](https://img.shields.io/badge/version-1.2.13-blue.svg)](https://github.com/Sangam1112/bharat-browser)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Ubuntu%20%7C%20Linux-orange.svg)]()
+[![Platform](https://img.shields.io/badge/platform-Fedora%20%7C%20Linux-orange.svg)]()
 [![Privacy](https://img.shields.io/badge/privacy-Strict%20Enforcement-red.svg)]()
 
 ---
 
 ## 🌟 Overview
 
-**Bharat Browser** (`bharat-browser`) is a modern, high-performance web browser designed with strict security, privacy protection, and site compatibility at its core. It integrates industry-leading open-source privacy engines—including **DarkReader**, **uBlock Origin Lite / Privacy Badger**, and **ClearURLs**—into a native, hardware-accelerated Linux desktop application.
+**Bharat Browser** (`bharat-browser`) is a modern, high-performance web browser designed with strict security, privacy protection, and site compatibility at its core. It's a native, hardware-accelerated GTK3 + WebKit2GTK desktop application with a custom ad/tracker blocklist, tracking-parameter stripping, HTTPS upgrading, and a DarkReader-style dark mode built in-house (not bundled copies of the uBlock Origin, Privacy Badger, DarkReader, or ClearURLs projects).
 
 ---
 
@@ -41,7 +41,7 @@
 
 ---
 
-## 📦 Installation Guide (Fedora & Ubuntu/Debian)
+## 📦 Installation Guide (Fedora, plus Windows via WSL2)
 
 ### 🔵 Fedora Linux Installation
 
