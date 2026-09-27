@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.26"
+VERSION="1.2.27"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,11 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.27-1
+- Fix install-ubuntu.sh unconditionally prefixing apt-get with sudo even
+  when already running as root, which fails with "sudo: command not
+  found" on minimal root-only Ubuntu container images that don't ship
+  sudo at all
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.26-1
 - Add install-ubuntu.sh: a first-class native Ubuntu/Debian installer
   (apt dependencies, user or --system install, desktop shortcut + icon

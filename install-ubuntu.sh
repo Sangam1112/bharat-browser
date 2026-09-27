@@ -32,15 +32,25 @@ else
     USE_SUDO=true
 fi
 
+# apt always needs root regardless of whether the app itself is being
+# installed system-wide or to ~/.local; but if we're already root (e.g. a
+# minimal container image), "sudo" may not even be installed, so don't
+# invoke it unnecessarily in that case (unlike CMD_PREFIX below, this
+# doesn't depend on the --system choice).
+APT_PREFIX="sudo"
+if [ "$EUID" -eq 0 ]; then
+    APT_PREFIX=""
+fi
+
 echo "[1/4] Installing dependencies via apt..."
-sudo apt-get update
-sudo apt-get install -y python3 python3-gi python3-gi-cairo gir1.2-gtk-3.0 git
+$APT_PREFIX apt-get update
+$APT_PREFIX apt-get install -y python3 python3-gi python3-gi-cairo gir1.2-gtk-3.0 git
 
 # Ubuntu 24.04+ ships webkit2gtk 4.1; older releases only have 4.0.
 if apt-cache show gir1.2-webkit2-4.1 >/dev/null 2>&1; then
-    sudo apt-get install -y gir1.2-webkit2-4.1
+    $APT_PREFIX apt-get install -y gir1.2-webkit2-4.1
 else
-    sudo apt-get install -y gir1.2-webkit2-4.0
+    $APT_PREFIX apt-get install -y gir1.2-webkit2-4.0
 fi
 
 if [ "$USE_SUDO" = true ]; then
