@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.28"
+VERSION="1.2.29"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,12 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.29-1
+- Add build-deb.sh and a shipped .deb package (bharat-browser_1.2.29-1_all.deb)
+  for native `sudo apt install ./file.deb` installation on Ubuntu/Debian,
+  in addition to the existing install-ubuntu.sh script. Built by hand with
+  ar/tar rather than dpkg-deb so it doesn't require Debian packaging tools
+  on the (Fedora) build machine
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.28-1
 - Hide the tab strip entirely when only one tab is open, and show it
   again as soon as a second tab is opened, instead of always showing a
