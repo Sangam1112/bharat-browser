@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.12"
+VERSION="1.2.13"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,13 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.13-1
+- Fix Settings/Downloads dialogs still showing a light system-themed title
+  bar despite the dark content area fix in 1.2.12: they now get the same
+  custom dark Gtk.HeaderBar the main window uses
+- Fix header/title-bar text color (main window and dialogs) not being
+  explicitly set to white, which some system GTK themes rendered as
+  low-contrast dark-on-dark text
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.12-1
 - Version-check overlay ("browser is up to date") now auto-dismisses after
   2 seconds instead of 5

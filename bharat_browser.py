@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.12 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.13 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -426,7 +426,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.12"
+        self.current_version = "1.2.13"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -769,7 +769,7 @@ class BharatBrowserWindow(Gtk.Window):
         css_provider = Gtk.CssProvider()
         css_data = b"""
         * {
-            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Cantarell", "Ubuntu", sans-serif;
+            font-family: "Dubai", -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Cantarell", "Ubuntu", sans-serif;
         }
         window { background-color: #0b0e14; }
 
@@ -780,11 +780,22 @@ class BharatBrowserWindow(Gtk.Window):
             box-shadow: none;
             padding: 0 4px;
             min-height: 0;
+            color: #f8fafc;
+        }
+        /* Explicit, not just inherited: the system GTK theme (e.g. Adwaita)
+        gives headerbar .title/.subtitle their own color that can win over
+        plain inheritance, which is what left dialog title text unreadably
+        dark against our dark background. */
+        headerbar.bharat-titlebar .title,
+        headerbar.bharat-titlebar .subtitle,
+        headerbar.bharat-titlebar label {
+            color: #f8fafc;
         }
         headerbar.bharat-titlebar button {
             min-height: 0;
             min-width: 0;
             padding: 2px;
+            color: #f8fafc;
         }
 
         .top-bar {
@@ -974,6 +985,18 @@ class BharatBrowserWindow(Gtk.Window):
             css_provider,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
+
+    def apply_dark_titlebar(self, dialog, title_text):
+        """Give a Gtk.Dialog the same dark Gtk.HeaderBar the main window uses.
+        Without this, GTK/the window manager draws the dialog's title bar
+        using the system GTK theme (usually light), which the app's own CSS
+        provider can't reach since that chrome isn't part of the dialog's
+        content widget tree."""
+        titlebar = Gtk.HeaderBar()
+        titlebar.set_show_close_button(True)
+        titlebar.set_title(title_text)
+        titlebar.get_style_context().add_class("bharat-titlebar")
+        dialog.set_titlebar(titlebar)
 
     # Multi-Tab Architecture Helper Methods
     def create_new_tab(self, url="https://www.google.co.in"):
@@ -1229,6 +1252,7 @@ class BharatBrowserWindow(Gtk.Window):
             destroy_with_parent=True
         )
         dialog.get_style_context().add_class("bharat-dialog")
+        self.apply_dark_titlebar(dialog, "📥 Downloads Manager")
         dialog.add_button("Close", Gtk.ResponseType.CLOSE)
         dialog.set_default_size(460, 320)
 
@@ -1614,13 +1638,15 @@ class BharatBrowserWindow(Gtk.Window):
             self.statusbar.push(self.context_id, f"❌ Screenshot failed: {str(e)}")
 
     def on_settings_clicked(self, btn):
+        title_text = f"Browser Settings & Extensions (v{self.current_version})"
         dialog = Gtk.Dialog(
-            title=f"Browser Settings & Extensions (v{self.current_version})",
+            title=title_text,
             transient_for=self,
             modal=True,
             destroy_with_parent=True
         )
         dialog.get_style_context().add_class("bharat-dialog")
+        self.apply_dark_titlebar(dialog, title_text)
         dialog.add_button("Close", Gtk.ResponseType.CLOSE)
         dialog.set_default_size(480, 360)
 
