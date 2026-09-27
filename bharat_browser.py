@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.24 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.25 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -13,6 +13,7 @@ os.environ["GST_DEBUG"] = "0"
 os.environ["WEBKIT_USE_SINGLE_WEB_PROCESS"] = "0"
 
 import ast
+import getpass
 import hashlib
 import ipaddress
 import re
@@ -484,7 +485,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.24"
+        self.current_version = "1.2.25"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -537,6 +538,7 @@ class BharatBrowserWindow(Gtk.Window):
             self.search_engine = DEFAULT_SEARCH_ENGINE
         self.homepage = sanitize_homepage_url(saved_settings.get("homepage", DEFAULT_HOMEPAGE))
         self.open_homepage_on_startup = saved_settings.get("open_homepage_on_startup", False)
+        self.first_run_greeted = saved_settings.get("first_run_greeted", False)
 
         # URL-bar autocomplete history. Never loaded/written for private
         # windows, matching the session-state privacy guarantee.
@@ -785,6 +787,21 @@ class BharatBrowserWindow(Gtk.Window):
         self.zoom_indicator.hide()
         self.overlay.add_overlay(self.zoom_indicator)
         self._zoom_indicator_hide_source = None
+
+        # First-Run Greeting — shown once ever (never in private windows),
+        # auto-hidden after 2 seconds.
+        self.greeting_banner = Gtk.Label()
+        self.greeting_banner.get_style_context().add_class("greeting-banner")
+        self.greeting_banner.set_halign(Gtk.Align.CENTER)
+        self.greeting_banner.set_valign(Gtk.Align.START)
+        self.greeting_banner.set_margin_top(16)
+        self.greeting_banner.set_no_show_all(True)
+        self.greeting_banner.hide()
+        self.overlay.add_overlay(self.greeting_banner)
+        if not self.first_run_greeted and not self.is_private:
+            self.first_run_greeted = True
+            self.save_settings()
+            GLib.idle_add(self.show_first_run_greeting)
 
         # Find-in-Page Bar Overlay — Ctrl+F to open, Escape to close.
         self.find_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -1091,6 +1108,17 @@ class BharatBrowserWindow(Gtk.Window):
             border: 1px solid rgba(255, 255, 255, 0.15);
             border-radius: 10px;
             padding: 8px 18px;
+            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+        }
+
+        .greeting-banner {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(16, 185, 129, 0.18));
+            color: #f8fafc;
+            font-weight: 700;
+            font-size: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            padding: 10px 22px;
             box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
         }
 
@@ -1466,6 +1494,19 @@ class BharatBrowserWindow(Gtk.Window):
             self._zoom_indicator_hide_source = None
             return False
         self._zoom_indicator_hide_source = GLib.timeout_add_seconds(self.ZOOM_INDICATOR_AUTOHIDE_SECONDS, _hide)
+
+    GREETING_AUTOHIDE_SECONDS = 2
+
+    def show_first_run_greeting(self):
+        try:
+            username = getpass.getuser()
+        except Exception:
+            username = ""
+        text = f"नमस्ते {username} 👋" if username else "नमस्ते 👋"
+        self.greeting_banner.set_text(text)
+        self.greeting_banner.show()
+        GLib.timeout_add_seconds(self.GREETING_AUTOHIDE_SECONDS, lambda: (self.greeting_banner.hide(), False)[1])
+        return False
 
     def on_webview_scroll(self, webview, event):
         if not (event.state & Gdk.ModifierType.CONTROL_MASK):
@@ -2068,7 +2109,8 @@ class BharatBrowserWindow(Gtk.Window):
             "webrtc_enabled": self.webrtc_enabled,
             "search_engine": self.search_engine,
             "homepage": self.homepage,
-            "open_homepage_on_startup": self.open_homepage_on_startup
+            "open_homepage_on_startup": self.open_homepage_on_startup,
+            "first_run_greeted": self.first_run_greeted
         })
 
     def on_dark_clicked(self, btn):

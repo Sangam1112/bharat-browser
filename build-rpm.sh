@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.24"
+VERSION="1.2.25"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,12 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.25-1
+- Add a first-run greeting ("नमस्ते <login name> 👋") shown once ever, on
+  the very first startup, auto-hiding after 2 seconds. Never shown in
+  private windows, and a private window never consumes/marks the
+  one-time flag either, so the greeting still appears the first time a
+  normal window is opened even if a private window ran first
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.24-1
 - Remove the "Bharat vX.Y.Z" brand badge that sat next to the Back/
   Forward/Reload buttons in the toolbar, freeing up address-bar space
