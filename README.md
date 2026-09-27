@@ -58,15 +58,33 @@ sudo dnf install ./bharat-browser-1.2.26-1.fc44.noarch.rpm
 ### 🟠 Ubuntu / Debian Linux Installation
 
 ```bash
+# 1. Clone the repository
 git clone https://github.com/Sangam1112/bharat-browser.git
 cd bharat-browser
+
+# 2. Run the Ubuntu installer script
 ./install-ubuntu.sh
 ```
-This installs the required GTK3/WebKit2GTK dependencies via `apt`
+
+The script installs the required GTK3/WebKit2GTK dependencies via `apt`
 (`gir1.2-webkit2-4.1` on Ubuntu 24.04+, `gir1.2-webkit2-4.0` on older
-releases — detected automatically), copies the app to `~/.local` by
-default, and registers a desktop launcher entry. Pass `--system` for a
-system-wide `/usr` install instead (prompts for `sudo`).
+releases — detected automatically), then installs the app itself:
+
+* **Default (no flags):** installs to `~/.local` for the current user
+  only — no `sudo` needed for this part.
+* **System-wide install:** `./install-ubuntu.sh --system` installs to
+  `/usr` for all users instead (prompts for `sudo`).
+
+Either way it registers a desktop launcher entry (shows up in your
+application menu) and installs the app icon. Launch it afterward with:
+```bash
+bharat-browser
+```
+If the command isn't found in a new terminal after a user-local
+install, add this to `~/.bashrc`:
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
 
 ### 🪟 How to run on Windows 10/11
 
