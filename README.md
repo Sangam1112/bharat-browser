@@ -1,8 +1,8 @@
-# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.21
+# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.22
 
 > **Modern, Ultra-Fast, and Privacy-First Web Browser engineered for Linux (Fedora)**
 
-[![Version](https://img.shields.io/badge/version-1.2.21-blue.svg)](https://github.com/Sangam1112/bharat-browser)
+[![Version](https://img.shields.io/badge/version-1.2.22-blue.svg)](https://github.com/Sangam1112/bharat-browser)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Fedora%20%7C%20Linux-orange.svg)]()
 [![Privacy](https://img.shields.io/badge/privacy-Strict%20Enforcement-red.svg)]()
@@ -40,18 +40,18 @@ cd bharat-browser
 ./install-fedora.sh
 ```
 
-**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.21_fedora.tar.gz`)**
+**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.22_fedora.tar.gz`)**
 ```bash
 # 1. Extract the release archive
-tar -xzf bharat-browser_1.2.21_fedora.tar.gz -C /tmp/bharat_fedora
+tar -xzf bharat-browser_1.2.22_fedora.tar.gz -C /tmp/bharat_fedora
 
 # 2. Run installer script from archive
 cd /tmp/bharat_fedora && ./install-fedora.sh
 ```
 
-**Option C: Install the RPM directly (`bharat-browser-1.2.21-1.fc44.noarch.rpm`)**
+**Option C: Install the RPM directly (`bharat-browser-1.2.22-1.fc44.noarch.rpm`)**
 ```bash
-sudo dnf install ./bharat-browser-1.2.21-1.fc44.noarch.rpm
+sudo dnf install ./bharat-browser-1.2.22-1.fc44.noarch.rpm
 ```
 
 ### 🪟 How to run on Windows 10/11

@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.21"
+VERSION="1.2.22"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,18 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.22-1
+- Add graceful handling for network-level load failures (e.g. "Peer failed
+  to perform TLS handshake: Connection reset by peer"), previously shown
+  to the user as a raw, unstyled error with no automatic recovery. Many of
+  these are transient and succeed on a plain retry, so the browser now
+  retries once automatically before giving up; if it still fails, a
+  friendly branded error page is shown instead of raw GLib error text.
+- Fixed a real bug found while testing the above: WebKit fires
+  load-changed(FINISHED) even for a load that just failed, which was
+  unconditionally clearing the new retry counter every time and would
+  have caused a silent infinite retry loop that never reaches the
+  "show an error page" fallback. Now only cleared on genuine success.
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.21-1
 - Add Find in Page (Ctrl+F): a floating search bar with live match-count,
   next/previous (Enter / Shift+Enter), and Escape to close, backed by

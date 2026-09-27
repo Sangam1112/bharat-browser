@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.21 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.22 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -484,7 +484,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.21"
+        self.current_version = "1.2.22"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -522,6 +522,7 @@ class BharatBrowserWindow(Gtk.Window):
         self.blocked_count = 0
         self.downloads_history = []
         self._crash_counts = {}
+        self._load_failure_counts = {}
 
         saved_settings = load_persistent_settings()
         self.dark_mode_active = saved_settings.get("dark_mode", False)
@@ -1217,6 +1218,7 @@ class BharatBrowserWindow(Gtk.Window):
         webview.connect("web-process-terminated", self.on_web_process_terminated)
         webview.connect("permission-request", self.on_permission_request)
         webview.connect("load-failed-with-tls-errors", self.on_load_failed_with_tls_errors)
+        webview.connect("load-failed", self.on_load_failed)
         # Without this, WebKit silently drops any navigation that wants a new
         # window/tab (target="_blank", window.open(), middle-click, OAuth
         # popups, etc.) instead of doing anything visible.
@@ -1274,6 +1276,7 @@ class BharatBrowserWindow(Gtk.Window):
     def close_tab(self, tab_box):
         if hasattr(tab_box, '_bharat_webview'):
             self._crash_counts.pop(id(tab_box._bharat_webview), None)
+            self._load_failure_counts.pop(id(tab_box._bharat_webview), None)
         page_num = self.notebook.page_num(tab_box)
         if page_num != -1:
             self.notebook.remove_page(page_num)
@@ -1363,6 +1366,46 @@ class BharatBrowserWindow(Gtk.Window):
         )
         GLib.idle_add(lambda: webview.load_html(error_html, failing_uri))
         self.statusbar.push(self.context_id, f"⚠️ Blocked invalid certificate on {host}")
+        return True
+
+    MAX_AUTO_RETRY_LOAD_FAILURES = 1
+    LOAD_RETRY_DELAY_MS = 600
+
+    def on_load_failed(self, webview, load_event, failing_uri, error):
+        # Fires for any network-level load failure (connection reset during
+        # TLS handshake, DNS hiccups, timeouts, etc.) — separate from
+        # on_load_failed_with_tls_errors, which is only for certificate
+        # *validation* problems. CANCELLED just means the user navigated
+        # away or stopped the load; that's normal, not a real failure.
+        if error.matches(WebKit2.network_error_quark(), WebKit2.NetworkError.CANCELLED):
+            return True
+
+        key = id(webview)
+        count = self._load_failure_counts.get(key, 0) + 1
+        self._load_failure_counts[key] = count
+        print(f"Load failed for {failing_uri} (attempt {count}): {error.message}")
+
+        if count <= self.MAX_AUTO_RETRY_LOAD_FAILURES:
+            # Many of these (e.g. "Connection reset by peer" mid-TLS-handshake)
+            # are transient and succeed on a plain retry, so retry once
+            # silently before showing the user an error page.
+            self.statusbar.push(self.context_id, f"⚠️ Load failed, retrying... ({error.message})")
+            GLib.timeout_add(self.LOAD_RETRY_DELAY_MS, lambda: (webview.load_uri(failing_uri), False)[1])
+            return True
+
+        self._load_failure_counts.pop(key, None)
+        host = urllib.parse.urlparse(failing_uri).hostname or failing_uri
+        error_html = (
+            "<html><body style='background:#0b0e14;color:#f8fafc;"
+            "font-family:sans-serif;padding:40px;'>"
+            "<h2>⚠️ This page didn't load</h2>"
+            f"<p>Bharat Browser couldn't reach <b>{GLib.markup_escape_text(host)}</b>:</p>"
+            f"<p style='color:#94a3b8'>{GLib.markup_escape_text(error.message)}</p>"
+            "<p>Use the Reload button to try again.</p>"
+            "</body></html>"
+        )
+        GLib.idle_add(lambda: webview.load_html(error_html, failing_uri))
+        self.statusbar.push(self.context_id, f"⚠️ Failed to load {host}")
         return True
 
     def on_key_press(self, widget, event):
@@ -1856,6 +1899,14 @@ class BharatBrowserWindow(Gtk.Window):
             self._crash_counts.pop(id(webview), None)
             uri = webview.get_uri() or ""
             title = webview.get_title() or "New Tab"
+            # WebKit fires load-changed(FINISHED) even for a load that just
+            # failed (load-failed fires first, with the webview's URI back
+            # to empty at this point) — only clear the retry counter on a
+            # genuine success, or on_load_failed's retry-once logic would
+            # get silently reset every time and retry forever instead of
+            # ever reaching the "show a friendly error page" threshold.
+            if uri:
+                self._load_failure_counts.pop(id(webview), None)
             
             active_wv = self.get_active_webview()
             if active_wv == webview:
