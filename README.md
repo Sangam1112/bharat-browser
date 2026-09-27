@@ -27,6 +27,34 @@
 
 ---
 
+## 📏 Installer Size vs. Other Browsers
+
+| Browser | Installer size | Installed size (approx.) |
+|---|---|---|
+| **Bharat Browser** | **~174 KB** (RPM) | **~250 KB** (app itself) |
+| Google Chrome | ~90–100 MB | ~250–350 MB |
+| Mozilla Firefox | ~55–75 MB | ~200–300 MB |
+| Chromium | ~100–150 MB | ~300–400 MB |
+| Brave | ~90–110 MB | ~300+ MB |
+| Microsoft Edge (Linux) | ~90–100 MB | ~250–350 MB |
+
+That's roughly a **500–1000x** smaller installer. The reason is
+architectural, not just optimization: Chrome, Firefox, Chromium, Brave,
+and Edge each **bundle their own complete rendering engine** (Blink+V8,
+or Gecko+SpiderMonkey for Firefox) as compiled native binaries — typically
+150–250 MB by itself. Bharat Browser ships none of that: it's a ~112 KB
+Python/GTK3 script that calls into **WebKit2GTK**, a system library most
+Linux desktops already have installed for other GTK apps, rather than a
+bundled-per-app engine. Same WebKit rendering family as Safari — the
+engine does comparable work, it's just not shipped twice.
+
+> Bharat Browser's own installer/installed sizes above were measured
+> directly (see `ls -lh *.rpm` and `du -sh` in this repo). The other
+> browsers' figures are well-known public approximations, not measured
+> against a specific installed copy — they vary by version and platform.
+
+---
+
 ## 📦 Installation Guide (Fedora, Ubuntu/Debian, plus Windows via WSL2)
 
 ### 🔵 Fedora Linux Installation
