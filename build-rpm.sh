@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.16"
+VERSION="1.2.17"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,13 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.17-1
+- Add Ctrl+scroll wheel to zoom webpage content in/out (in addition to
+  the existing Ctrl+/Ctrl-/Ctrl+0 keyboard shortcuts), including smooth
+  scrolling (touchpad) support
+- Add a floating on-screen zoom-percentage indicator shown for 2 seconds
+  after every zoom change (keyboard or Ctrl+scroll), instead of only a
+  statusbar message
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.16-1
 - Fix Settings dialog scrolling being effectively unusable: the scroll area
   was packed with content_area.add(), which does not give it expand/fill,

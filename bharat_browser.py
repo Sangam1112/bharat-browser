@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.16 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.17 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -460,7 +460,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.16"
+        self.current_version = "1.2.17"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -741,6 +741,18 @@ class BharatBrowserWindow(Gtk.Window):
         self.overlay.add_overlay(self.update_dialog_box)
         self.update_dialog_box.hide()
 
+        # Zoom Level Indicator Overlay — shown briefly on Ctrl+/Ctrl-/Ctrl+0
+        # and Ctrl+scroll wheel, then auto-hidden.
+        self.zoom_indicator = Gtk.Label()
+        self.zoom_indicator.get_style_context().add_class("zoom-indicator")
+        self.zoom_indicator.set_halign(Gtk.Align.CENTER)
+        self.zoom_indicator.set_valign(Gtk.Align.START)
+        self.zoom_indicator.set_margin_top(16)
+        self.zoom_indicator.set_no_show_all(True)
+        self.zoom_indicator.hide()
+        self.overlay.add_overlay(self.zoom_indicator)
+        self._zoom_indicator_hide_source = None
+
         # Restore Session or Open Initial Tab (private windows never read or
         # write session.json, so no private URL ever touches disk)
         if self.is_private:
@@ -997,6 +1009,17 @@ class BharatBrowserWindow(Gtk.Window):
         }
         .update-close-btn:hover { background: rgba(255, 255, 255, 0.08); color: #ffffff; }
 
+        .zoom-indicator {
+            background: rgba(17, 21, 29, 0.92);
+            color: #f8fafc;
+            font-weight: 700;
+            font-size: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 10px;
+            padding: 8px 18px;
+            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+        }
+
         /* Settings / Downloads / message dialogs: match the dark app chrome
         instead of falling back to the light system GTK theme, which they
         do by default since they're plain Gtk.Dialog/Gtk.MessageDialog
@@ -1088,6 +1111,7 @@ class BharatBrowserWindow(Gtk.Window):
         # window/tab (target="_blank", window.open(), middle-click, OAuth
         # popups, etc.) instead of doing anything visible.
         webview.connect("create", self.on_create_webview)
+        webview.connect("scroll-event", self.on_webview_scroll)
 
         tab_box.pack_start(webview, True, True, 0)
         tab_box.show_all()
@@ -1250,6 +1274,8 @@ class BharatBrowserWindow(Gtk.Window):
     ZOOM_MIN = 0.3
     ZOOM_MAX = 3.0
 
+    ZOOM_INDICATOR_AUTOHIDE_SECONDS = 2
+
     def adjust_zoom(self, delta=0.0, reset=False):
         webview = self.get_active_webview()
         if not webview:
@@ -1257,7 +1283,39 @@ class BharatBrowserWindow(Gtk.Window):
         new_level = 1.0 if reset else webview.get_zoom_level() + delta
         new_level = max(self.ZOOM_MIN, min(self.ZOOM_MAX, new_level))
         webview.set_zoom_level(new_level)
-        self.push_notification_status(f"🔍 Zoom: {round(new_level * 100)}%")
+        self.show_zoom_indicator(new_level)
+
+    def show_zoom_indicator(self, zoom_level):
+        """Floating badge with the current zoom %, shown on every zoom change
+        (Ctrl+/Ctrl-/Ctrl+0 and Ctrl+scroll) and auto-hidden after 2 seconds."""
+        self.zoom_indicator.set_text(f"🔍 {round(zoom_level * 100)}%")
+        self.zoom_indicator.show()
+        # Cancel any previously scheduled auto-hide so a fast run of zoom
+        # events doesn't stack timers that later hide the badge out from
+        # under a still-current reading.
+        if self._zoom_indicator_hide_source is not None:
+            GLib.source_remove(self._zoom_indicator_hide_source)
+
+        def _hide():
+            self.zoom_indicator.hide()
+            self._zoom_indicator_hide_source = None
+            return False
+        self._zoom_indicator_hide_source = GLib.timeout_add_seconds(self.ZOOM_INDICATOR_AUTOHIDE_SECONDS, _hide)
+
+    def on_webview_scroll(self, webview, event):
+        if not (event.state & Gdk.ModifierType.CONTROL_MASK):
+            return False  # let the page scroll normally
+        if event.direction == Gdk.ScrollDirection.UP:
+            self.adjust_zoom(0.1)
+        elif event.direction == Gdk.ScrollDirection.DOWN:
+            self.adjust_zoom(-0.1)
+        elif event.direction == Gdk.ScrollDirection.SMOOTH:
+            _, delta_y = event.get_scroll_deltas()
+            if delta_y < 0:
+                self.adjust_zoom(0.1)
+            elif delta_y > 0:
+                self.adjust_zoom(-0.1)
+        return True  # consume the event: don't also scroll/pinch-zoom the page
 
     def open_private_window(self):
         win = BharatBrowserWindow(private=True)
