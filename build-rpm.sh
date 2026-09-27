@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.17"
+VERSION="1.2.18"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,13 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.18-1
+- Fix Ctrl+scroll zoom not actually working: it was wired up via a plain
+  "scroll-event" GTK signal, but WebKitWebView manages its own native
+  input surface for page scrolling and can consume/ignore those events
+  before that signal ever fires for real hardware input. Replaced with a
+  Gtk.EventControllerScroll in the CAPTURE propagation phase, which
+  reliably intercepts the event before WebKit's own handling of it.
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.17-1
 - Add Ctrl+scroll wheel to zoom webpage content in/out (in addition to
   the existing Ctrl+/Ctrl-/Ctrl+0 keyboard shortcuts), including smooth

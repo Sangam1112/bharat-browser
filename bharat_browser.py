@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.17 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.18 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -460,7 +460,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.17"
+        self.current_version = "1.2.18"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -1111,7 +1111,23 @@ class BharatBrowserWindow(Gtk.Window):
         # window/tab (target="_blank", window.open(), middle-click, OAuth
         # popups, etc.) instead of doing anything visible.
         webview.connect("create", self.on_create_webview)
-        webview.connect("scroll-event", self.on_webview_scroll)
+
+        # Ctrl+scroll to zoom. WebKitWebView manages its own native input
+        # surface for page scrolling, so it can consume wheel/touchpad
+        # events before a plain "scroll-event" signal connection ever sees
+        # them. A Gtk.EventControllerScroll in the CAPTURE phase runs before
+        # the widget's own handling gets a chance, so it reliably intercepts
+        # Ctrl+scroll regardless of what WebKit itself does with the event.
+        scroll_controller = Gtk.EventControllerScroll.new(
+            webview,
+            Gtk.EventControllerScrollFlags.VERTICAL | Gtk.EventControllerScrollFlags.DISCRETE
+        )
+        scroll_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        scroll_controller.connect("scroll", self.on_webview_scroll_controller)
+        # GTK3's EventController isn't kept alive by the widget the way
+        # GTK4's is, so without a strong reference here it would be garbage
+        # collected almost immediately and silently stop firing.
+        webview._bharat_scroll_controller = scroll_controller
 
         tab_box.pack_start(webview, True, True, 0)
         tab_box.show_all()
@@ -1302,19 +1318,16 @@ class BharatBrowserWindow(Gtk.Window):
             return False
         self._zoom_indicator_hide_source = GLib.timeout_add_seconds(self.ZOOM_INDICATOR_AUTOHIDE_SECONDS, _hide)
 
-    def on_webview_scroll(self, webview, event):
-        if not (event.state & Gdk.ModifierType.CONTROL_MASK):
+    def on_webview_scroll_controller(self, controller, dx, dy):
+        # EventControllerScroll's "scroll" signal doesn't pass modifier state
+        # directly, so read the keyboard's live state instead.
+        modifiers = Gdk.Keymap.get_default().get_modifier_state()
+        if not (modifiers & Gdk.ModifierType.CONTROL_MASK):
             return False  # let the page scroll normally
-        if event.direction == Gdk.ScrollDirection.UP:
+        if dy < 0:
             self.adjust_zoom(0.1)
-        elif event.direction == Gdk.ScrollDirection.DOWN:
+        elif dy > 0:
             self.adjust_zoom(-0.1)
-        elif event.direction == Gdk.ScrollDirection.SMOOTH:
-            _, delta_y = event.get_scroll_deltas()
-            if delta_y < 0:
-                self.adjust_zoom(0.1)
-            elif delta_y > 0:
-                self.adjust_zoom(-0.1)
         return True  # consume the event: don't also scroll/pinch-zoom the page
 
     def open_private_window(self):
