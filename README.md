@@ -18,26 +18,23 @@
 ## ✨ Key Specifications & Features
 
 ### 🗂️ Multi-Tab Architecture & Performance Tuning
-* **Native Multi-Tab Workspace**: Powered by `Gtk.Notebook` allowing instant creation (Ctrl+T), tab switching, and closing (Ctrl+W) with shared high-speed WebContext cache.
-* **Smart Link Prefetching Engine**: Injected `mouseenter` hover listener pre-resolves DNS (`dns-prefetch`) and warms up TLS connections (`preconnect`) prior to user clicks.
-* **Process Crash Resilience**: Automatic `web-process-terminated` signal handling auto-recovers tabs seamlessly during OOM spikes or render crashes.
-* **WebKit2 DataManager Cache**: Optimized disk and RAM caching via custom `WebsiteDataManager` paths (`~/.cache/bharat-browser`).
+* **Native Multi-Tab Workspace**: Powered by `Gtk.Notebook` allowing instant creation (Ctrl+T), tab switching, and closing (Ctrl+W) with a shared `WebContext` cache.
+* **Smart Link Prefetching**: A hover listener pre-resolves DNS (`dns-prefetch`) and warms up connections (`preconnect`) for links the pointer is over, before the user clicks.
+* **Process Crash Resilience**: `web-process-terminated` signal handling recovers tabs after renderer crashes or OOM kills instead of leaving a blank tab.
+* **WebKit2 DataManager Cache**: Disk cache and storage are pointed at custom `WebsiteDataManager` paths (`~/.cache/bharat-browser`, `~/.config/bharat-browser`) instead of WebKit's defaults.
+* **Low-Memory Trimming**: Listens for `Gio.MemoryMonitor` low-memory warnings and trims the WebKit cache in response.
 
 ### 🔒 Privacy & Security Defaults
-* **2-Stage Request Interceptor**: High-throughput filter architecture using an $O(1)$ domain pre-lookup hash set followed by path regular expressions (maintaining throughput > 25,000 requests/sec).
-* **Open-Source Ad & Tracker Blocking**: Native integration of uBlock Origin Lite and Privacy Badger filter lists to block intrusive ad servers, trackers, and telemetry scripts.
-* **ClearURLs URL Sanitization**: Automatically strips privacy-invading query parameters (e.g., `utm_*`, `fbclid`, `gclid`, `msclkid`, `mc_eid`, `yclid`, `igshid`) before network requests leave the device.
-* **HTTPS Enforcement**: Auto-upgrades non-secure `http://` connections to `https://` across all web navigation.
-* **Security Headers Enforcement**: Injects strict HTTP response headers (`X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`) to mitigate MIME-sniffing and cross-origin leaks.
+* **Domain-Based Ad & Tracker Blocking**: A built-in list of known ad/tracker/telemetry domains is checked via an O(1) hash-set lookup before each request; the optional `adblockparser` library adds regex-based filter-list support on top when installed. (This is a custom blocklist, not a bundled copy of uBlock Origin or Privacy Badger.)
+* **Tracking-Parameter Stripping**: Strips common tracking query parameters (`utm_*`, `fbclid`, `gclid`, `msclkid`, `mc_eid`, `yclid`, `igshid`, etc.) from URLs before navigation, toggleable in Settings.
+* **HTTPS Upgrade**: Rewrites `http://` navigations to `https://` automatically.
+* **Spoofed GPU/Renderer Fingerprint**: Overrides `WebGLRenderingContext`/`WebGL2RenderingContext` vendor/renderer strings and `navigator.hardwareConcurrency` to reduce fingerprintable hardware detail.
 
 ### ⚡ Performance & Hardware Acceleration
-* **GPU Hardware Acceleration**: Configured with `--enable-gpu-rasterization`, `--enable-zero-copy`, and `--ignore-gpu-blocklist` for smooth 60 FPS rendering.
-* **Adaptive Hardware Profiling**: Automatically detects system hardware resources:
-  * **High Spec ($\ge$ 4GB RAM)**: Maximizes hardware rasterization and multi-threaded rendering pipelines.
-  * **Low Spec (< 4GB RAM)**: Caps V8 JavaScript memory footprint (`--max-old-space-size=512`), throttles inactive background tab timers, and optimizes renderer process memory.
+* **Compositing & Hardware Acceleration**: Sets `WEBKIT_FORCE_COMPOSITING_MODE=1` and `GST_VAAPI_ALL_DRIVERS=1`, and configures WebKit's `hardware_acceleration_policy` to always use the GPU compositor.
 
-### 👁️ DarkReader Integration
-* **Universal Dark Mode**: Integrates the open-source DarkReader engine to inject clean, high-contrast dark themes into every visited website without causing visual artifacting.
+### 👁️ Dark Mode
+* **DarkReader-Style Dark Mode**: Injects a bundled high-contrast dark stylesheet (inspired by the DarkReader project, not the DarkReader library itself) into pages on toggle.
 
 ### 📥 Integrated Download Manager
 * **Native Downloads**: Built-in download manager with collision-safe filenames, a downloads history dialog, and status-bar progress notifications (started/completed/failed).
