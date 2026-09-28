@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.36 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.37 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -544,7 +544,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.36"
+        self.current_version = "1.2.37"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -615,6 +615,7 @@ class BharatBrowserWindow(Gtk.Window):
         self.first_run_greeted = saved_settings.get("first_run_greeted", False)
         self.low_memory_mode = saved_settings.get("low_memory_mode", False)
         self.tab_suspension_enabled = saved_settings.get("tab_suspension_enabled", True)
+        self.clear_history_on_exit = saved_settings.get("clear_history_on_exit", False)
 
         # URL-bar autocomplete history. Never loaded/written for private
         # windows, matching the session-state privacy guarantee.
@@ -1249,6 +1250,9 @@ class BharatBrowserWindow(Gtk.Window):
             background-color: rgba(255, 255, 255, 0.06);
             border: 1px solid rgba(255, 255, 255, 0.2);
             color: #f1f5f9;
+            border-radius: 4px;
+            min-width: 16px;
+            min-height: 16px;
         }
         .bharat-dialog check:checked, .bharat-dialog radio:checked {
             background-color: #6366f1;
@@ -1256,21 +1260,105 @@ class BharatBrowserWindow(Gtk.Window):
         }
         .bharat-dialog .settings-section-frame {
             background-color: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            border-radius: 10px;
+        }
+        .bharat-dialog .settings-card {
+            background-color: rgba(255, 255, 255, 0.035);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            padding: 12px 14px;
+        }
+        .bharat-dialog .settings-row {
+            padding: 4px 2px;
+        }
+        .bharat-dialog .settings-row-title {
+            color: #f8fafc;
+            font-size: 13px;
+            font-weight: 600;
         }
         .bharat-dialog .settings-section-title {
             color: #93c5fd;
+            font-weight: 700;
+            font-size: 12px;
             padding: 0 4px;
+            letter-spacing: 0.2px;
         }
         .bharat-dialog .settings-hint-label {
             color: #94a3b8;
-            font-size: 90%;
+            font-size: 11px;
         }
         .bharat-dialog entry {
             background-color: rgba(255, 255, 255, 0.06);
             color: #f1f5f9;
             border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 6px;
+            padding: 5px 10px;
+        }
+        .bharat-dialog entry:focus {
+            border-color: #6366f1;
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+        }
+        .bharat-dialog combobox button {
+            background-color: rgba(255, 255, 255, 0.06);
+            color: #f1f5f9;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 6px;
+            padding: 4px 10px;
+        }
+        .settings-stack-switcher {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 999px;
+            padding: 3px;
+        }
+        .settings-stack-switcher button {
+            background: transparent;
+            color: #94a3b8;
+            border: none;
+            border-radius: 999px;
+            padding: 5px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            box-shadow: none;
+            transition: background 120ms ease, color 120ms ease;
+        }
+        .settings-stack-switcher button:hover {
+            background: rgba(255, 255, 255, 0.06);
+            color: #f1f5f9;
+        }
+        .settings-stack-switcher button:checked {
+            background: #6366f1;
+            color: #ffffff;
+            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.35);
+        }
+        .settings-action-btn {
+            background: rgba(255, 255, 255, 0.05);
+            color: #f1f5f9;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 8px;
+            padding: 8px 14px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .settings-action-btn:hover {
+            background: rgba(255, 255, 255, 0.10);
+            border-color: rgba(255, 255, 255, 0.22);
+            color: #ffffff;
+        }
+        .settings-danger-btn {
+            background: rgba(239, 68, 68, 0.12);
+            color: #fca5a5;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 8px;
+            padding: 8px 14px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .settings-danger-btn:hover {
+            background: rgba(239, 68, 68, 0.22);
+            border-color: rgba(239, 68, 68, 0.5);
+            color: #fecaca;
         }
         """
         css_provider.load_from_data(css_data)
@@ -1388,6 +1476,14 @@ class BharatBrowserWindow(Gtk.Window):
             tab_box = self.notebook.get_nth_page(i)
             if hasattr(tab_box, '_bharat_webview'):
                 self._flush_page_view(tab_box._bharat_webview)
+
+        if not self.is_private and getattr(self, 'clear_history_on_exit', False):
+            self.url_history = []
+            save_url_history([])
+            if hasattr(self, 'url_completion_store'):
+                self.url_completion_store.clear()
+            if hasattr(self, '_page_view_start'):
+                self._page_view_start.clear()
 
         global _LIVE_WINDOW_COUNT
         _LIVE_WINDOW_COUNT -= 1
@@ -2392,7 +2488,8 @@ class BharatBrowserWindow(Gtk.Window):
             "open_homepage_on_startup": self.open_homepage_on_startup,
             "first_run_greeted": self.first_run_greeted,
             "low_memory_mode": self.low_memory_mode,
-            "tab_suspension_enabled": self.tab_suspension_enabled
+            "tab_suspension_enabled": self.tab_suspension_enabled,
+            "clear_history_on_exit": self.clear_history_on_exit
         })
 
     def on_dark_clicked(self, btn):
@@ -2498,30 +2595,47 @@ class BharatBrowserWindow(Gtk.Window):
             self.statusbar.push(self.context_id, f"❌ Screenshot failed: {str(e)}")
 
     @staticmethod
-    def _settings_section(title_text):
-        """A titled, visually boxed group for related settings, GNOME-Settings
-        style, instead of a bare bold label — makes it obvious at a glance
-        where one group of options ends and the next begins."""
-        frame = Gtk.Frame()
-        frame.set_shadow_type(Gtk.ShadowType.ETCHED_IN)
-        frame.get_style_context().add_class("settings-section-frame")
+    def _create_setting_card(title_text=None):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card.get_style_context().add_class("settings-card")
+        if title_text:
+            title_lbl = Gtk.Label(xalign=0.0)
+            title_lbl.set_markup(f"<b>{GLib.markup_escape_text(title_text)}</b>")
+            title_lbl.get_style_context().add_class("settings-section-title")
+            card.pack_start(title_lbl, False, False, 0)
+            card.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 2)
+        return card
 
+    @staticmethod
+    def _create_toggle_row(title_text, subtitle_text, is_active, on_toggled_cb):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        row.get_style_context().add_class("settings-row")
+
+        text_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         title_lbl = Gtk.Label(xalign=0.0)
-        title_lbl.set_markup(f"<b>{GLib.markup_escape_text(title_text)}</b>")
-        title_lbl.get_style_context().add_class("settings-section-title")
-        frame.set_label_widget(title_lbl)
-        frame.set_label_align(0.03, 0.5)
+        title_lbl.set_markup(f"<span weight='semibold'>{GLib.markup_escape_text(title_text)}</span>")
+        title_lbl.get_style_context().add_class("settings-row-title")
+        text_vbox.pack_start(title_lbl, False, False, 0)
 
-        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        inner.set_margin_start(12)
-        inner.set_margin_end(12)
-        inner.set_margin_top(10)
-        inner.set_margin_bottom(12)
-        frame.add(inner)
-        return frame, inner
+        if subtitle_text:
+            sub_lbl = Gtk.Label(xalign=0.0)
+            sub_lbl.set_markup(f"<small>{GLib.markup_escape_text(subtitle_text)}</small>")
+            sub_lbl.get_style_context().add_class("settings-hint-label")
+            sub_lbl.set_line_wrap(True)
+            text_vbox.pack_start(sub_lbl, False, False, 0)
+
+        row.pack_start(text_vbox, True, True, 0)
+
+        chk = Gtk.CheckButton()
+        chk.set_active(bool(is_active))
+        chk.set_valign(Gtk.Align.CENTER)
+        if on_toggled_cb:
+            chk.connect("toggled", lambda cb: on_toggled_cb(cb.get_active()))
+        row.pack_end(chk, False, False, 0)
+        return row
 
     def on_settings_clicked(self, btn):
-        title_text = f"Browser Settings & Extensions (v{self.current_version})"
+        title_text = f"Bharat Browser Settings (v{self.current_version})"
         dialog = Gtk.Dialog(
             title=title_text,
             transient_for=self,
@@ -2532,60 +2646,76 @@ class BharatBrowserWindow(Gtk.Window):
         self.apply_dark_titlebar(dialog, title_text)
         dialog.add_button("Close", Gtk.ResponseType.CLOSE)
         dialog.set_default_response(Gtk.ResponseType.CLOSE)
-        # Tall enough that most setups see everything without scrolling, but
-        # still resizable (GTK dialogs are resizable by default) for anyone
-        # who wants more room, and the scroller below still kicks in on
-        # small/cramped screens instead of clipping content unreachably.
-        dialog.set_default_size(540, 680)
+        dialog.set_default_size(580, 560)
 
         content_area = dialog.get_content_area()
-        content_area.set_margin_start(0)
-        content_area.set_margin_end(0)
-        content_area.set_margin_top(0)
-        content_area.set_margin_bottom(0)
+        content_area.set_margin_start(16)
+        content_area.set_margin_end(16)
+        content_area.set_margin_top(12)
+        content_area.set_margin_bottom(12)
 
-        scroller = Gtk.ScrolledWindow()
-        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        # content_area.add(scroller) would pack it without expand/fill here,
-        # so it only ever gets its tiny default minimum height instead of
-        # the dialog's available space — which is what made the scroll area
-        # effectively unusable. pack_start with expand=True, fill=True fixes it.
-        content_area.pack_start(scroller, True, True, 0)
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        content_area.pack_start(main_box, True, True, 0)
 
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-        vbox.set_margin_start(18)
-        vbox.set_margin_end(18)
-        vbox.set_margin_top(16)
-        vbox.set_margin_bottom(16)
-        scroller.add(vbox)
+        # Tab navigation with Gtk.Stack and Gtk.StackSwitcher
+        stack = Gtk.Stack()
+        stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        stack.set_transition_duration(200)
 
-        title_lbl = Gtk.Label(label=f"⚙️ Bharat Browser Settings (v{self.current_version})")
-        title_lbl.get_style_context().add_class("brand-label")
-        vbox.pack_start(title_lbl, False, False, 0)
+        stack_switcher = Gtk.StackSwitcher()
+        stack_switcher.set_stack(stack)
+        stack_switcher.set_halign(Gtk.Align.CENTER)
+        stack_switcher.get_style_context().add_class("settings-stack-switcher")
+        main_box.pack_start(stack_switcher, False, False, 0)
 
-        # --- General ---------------------------------------------------
-        general_frame, general_box = self._settings_section("General")
-        vbox.pack_start(general_frame, False, False, 0)
+        def _create_scrollable_page():
+            scroller = Gtk.ScrolledWindow()
+            scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            page_box.set_margin_start(4)
+            page_box.set_margin_end(4)
+            page_box.set_margin_top(8)
+            page_box.set_margin_bottom(8)
+            scroller.add(page_box)
+            return scroller, page_box
 
-        search_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        search_lbl = Gtk.Label(label="🔍 Search engine")
-        search_lbl.set_size_request(150, -1)
-        search_lbl.set_xalign(0.0)
-        search_box.pack_start(search_lbl, False, False, 0)
+        # --- Tab 1: General -----------------------------------------------
+        gen_scroller, gen_box = _create_scrollable_page()
+
+        search_card = self._create_setting_card("SEARCH ENGINE")
+        search_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        search_lbl_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        s_title = Gtk.Label(xalign=0.0)
+        s_title.set_markup("<span weight='semibold'>🔍 Default Search Engine</span>")
+        s_title.get_style_context().add_class("settings-row-title")
+        search_lbl_box.pack_start(s_title, False, False, 0)
+        s_hint = Gtk.Label(xalign=0.0)
+        s_hint.set_markup("<small>Used when searching directly from the address bar.</small>")
+        s_hint.get_style_context().add_class("settings-hint-label")
+        search_lbl_box.pack_start(s_hint, False, False, 0)
+        search_row.pack_start(search_lbl_box, True, True, 0)
+
         search_combo = Gtk.ComboBoxText()
-        search_combo.set_tooltip_text("Used when you type a search term (not a web address) into the address bar.")
         for engine_name in SEARCH_ENGINES:
             search_combo.append_text(engine_name)
         search_combo.set_active(list(SEARCH_ENGINES.keys()).index(self.search_engine))
         search_combo.connect("changed", lambda cb: (setattr(self, 'search_engine', cb.get_active_text()), self.save_settings()))
-        search_box.pack_start(search_combo, True, True, 0)
-        general_box.pack_start(search_box, False, False, 0)
+        search_combo.set_valign(Gtk.Align.CENTER)
+        search_row.pack_end(search_combo, False, False, 0)
+        search_card.pack_start(search_row, False, False, 0)
+        gen_box.pack_start(search_card, False, False, 0)
 
-        general_box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 2)
-
-        home_lbl = Gtk.Label(label="🏠 Homepage", xalign=0.0)
-        home_lbl.set_tooltip_text("Opened by new tabs (Ctrl+T), the New Tab button, and when the last tab closes.")
-        general_box.pack_start(home_lbl, False, False, 0)
+        home_card = self._create_setting_card("HOMEPAGE & STARTUP")
+        home_lbl_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        h_title = Gtk.Label(xalign=0.0)
+        h_title.set_markup("<span weight='semibold'>🏠 Custom Homepage</span>")
+        h_title.get_style_context().add_class("settings-row-title")
+        home_lbl_box.pack_start(h_title, False, False, 0)
+        h_hint = Gtk.Label(xalign=0.0)
+        h_hint.set_markup("<small>Loaded on new tabs (Ctrl+T) and initial startup.</small>")
+        h_hint.get_style_context().add_class("settings-hint-label")
+        home_lbl_box.pack_start(h_hint, False, False, 0)
+        home_card.pack_start(home_lbl_box, False, False, 0)
 
         home_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         home_entry = Gtk.Entry()
@@ -2595,135 +2725,179 @@ class BharatBrowserWindow(Gtk.Window):
         home_box.pack_start(home_entry, True, True, 0)
 
         btn_set_home = Gtk.Button(label="Set")
+        btn_set_home.get_style_context().add_class("settings-action-btn")
         btn_set_home.set_tooltip_text("Save this address as your homepage")
         home_box.pack_start(btn_set_home, False, False, 0)
 
         btn_reset_home = Gtk.Button(label="Use Google")
+        btn_reset_home.get_style_context().add_class("settings-action-btn")
         btn_reset_home.set_tooltip_text(f"Reset homepage to {DEFAULT_HOMEPAGE}")
         home_box.pack_start(btn_reset_home, False, False, 0)
-        general_box.pack_start(home_box, False, False, 0)
+        home_card.pack_start(home_box, False, False, 0)
 
         home_status = Gtk.Label(xalign=0.0)
         home_status.get_style_context().add_class("settings-hint-label")
-        general_box.pack_start(home_status, False, False, 0)
+        home_card.pack_start(home_status, False, False, 0)
 
         def _apply_homepage(new_value):
             self.homepage = sanitize_homepage_url(new_value)
             home_entry.set_text(self.homepage)
             self.save_settings()
-            home_status.set_text(f"✅ Homepage set to {self.homepage}")
+            home_status.set_text(f"✅ Homepage saved: {self.homepage}")
             GLib.timeout_add(3000, lambda: (home_status.set_text(""), False)[1])
 
         btn_set_home.connect("clicked", lambda b: _apply_homepage(home_entry.get_text()))
         home_entry.connect("activate", lambda e: _apply_homepage(e.get_text()))
         btn_reset_home.connect("clicked", lambda b: _apply_homepage(DEFAULT_HOMEPAGE))
 
-        chk_homepage_startup = Gtk.CheckButton(label="🚀 Open homepage on startup")
-        chk_homepage_startup.set_tooltip_text(
-            "On: every launch opens your homepage.\n"
-            "Off (default): launch restores your previous tabs, same as before."
+        home_card.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 2)
+        home_card.pack_start(
+            self._create_toggle_row(
+                "🚀 Open homepage on startup",
+                "When enabled, browser opens your homepage. When disabled, restores previous open tabs.",
+                self.open_homepage_on_startup,
+                lambda act: (setattr(self, 'open_homepage_on_startup', act), self.save_settings())
+            ),
+            False, False, 0
         )
-        chk_homepage_startup.set_active(self.open_homepage_on_startup)
-        chk_homepage_startup.connect(
-            "toggled",
-            lambda cb: (setattr(self, 'open_homepage_on_startup', cb.get_active()), self.save_settings())
+        gen_box.pack_start(home_card, False, False, 0)
+        stack.add_titled(gen_scroller, "general", "🌐 General")
+
+        # --- Tab 2: Privacy & Security ------------------------------------
+        priv_scroller, priv_box = _create_scrollable_page()
+
+        shield_card = self._create_setting_card("SHIELD & PROTECTION")
+        shield_card.pack_start(
+            self._create_toggle_row(
+                "🛡️ Ad & Tracker Blocking",
+                "Blocks known ad networks, telemetry, and tracking scripts with high throughput.",
+                self.adblock_enabled,
+                lambda act: (setattr(self, 'adblock_enabled', act), self.save_settings())
+            ),
+            False, False, 0
         )
-        general_box.pack_start(chk_homepage_startup, False, False, 0)
-
-        # --- Privacy & Security -----------------------------------------
-        privacy_frame, privacy_box = self._settings_section("Privacy & Security")
-        vbox.pack_start(privacy_frame, False, False, 0)
-
-        chk_dark = Gtk.CheckButton(label="🌙 DarkReader Engine (High-Contrast Webpages)")
-        chk_dark.set_active(self.dark_mode_active)
-        chk_dark.connect("toggled", lambda cb: self.on_dark_clicked(self.btn_dark))
-        privacy_box.pack_start(chk_dark, False, False, 0)
-
-        chk_adblock = Gtk.CheckButton(label="🛡️ Ad & Tracker Blocking")
-        chk_adblock.set_tooltip_text("Blocks known ad/tracker domains using a built-in blocklist.")
-        chk_adblock.set_active(self.adblock_enabled)
-        chk_adblock.connect("toggled", lambda cb: (setattr(self, 'adblock_enabled', cb.get_active()), self.save_settings()))
-        privacy_box.pack_start(chk_adblock, False, False, 0)
-
-        chk_clearurls = Gtk.CheckButton(label="🔗 Strip Tracking Parameters from URLs")
-        chk_clearurls.set_tooltip_text("Removes utm_*, fbclid, gclid, and similar tracking parameters before navigating.")
-        chk_clearurls.set_active(self.clearurls_enabled)
-        chk_clearurls.connect("toggled", lambda cb: (setattr(self, 'clearurls_enabled', cb.get_active()), self.save_settings()))
-        privacy_box.pack_start(chk_clearurls, False, False, 0)
-
-        chk_https = Gtk.CheckButton(label="🔒 HTTPS Enforcement (Auto-Upgrade HTTP)")
-        chk_https.set_active(self.https_enabled)
-        chk_https.connect("toggled", lambda cb: (setattr(self, 'https_enabled', cb.get_active()), self.save_settings()))
-        privacy_box.pack_start(chk_https, False, False, 0)
-
-        chk_webrtc = Gtk.CheckButton(label="🎥 WebRTC / Camera & Mic")
-        chk_webrtc.set_tooltip_text("Off by default — WebRTC can leak your local network IP address even behind a VPN.")
-        chk_webrtc.set_active(self.webrtc_enabled)
-        chk_webrtc.connect("toggled", lambda cb: self.on_webrtc_toggled(cb.get_active()))
-        privacy_box.pack_start(chk_webrtc, False, False, 0)
-
-        # --- Advanced ----------------------------------------------------
-        advanced_frame, advanced_box = self._settings_section("Advanced")
-        vbox.pack_start(advanced_frame, False, False, 0)
-
-        chk_devtools = Gtk.CheckButton(label="🛠️ Developer Tools (Web Inspector)")
-        chk_devtools.set_active(self.dev_tools_enabled)
-        chk_devtools.connect("toggled", lambda cb: self.on_devtools_toggled(cb.get_active()))
-        advanced_box.pack_start(chk_devtools, False, False, 0)
-
-        chk_low_memory = Gtk.CheckButton(label="🪶 Low Memory Mode")
-        chk_low_memory.set_tooltip_text(
-            "Shrinks WebKit's page cache immediately — trades some repeat-page "
-            "load speed for a smaller memory footprint, for machines with "
-            "limited RAM. Also requests one shared render process for all "
-            "tabs after a restart, though on current WebKitGTK versions "
-            "(confirmed on 2.54) that request is not honored — the cache "
-            "reduction is the effect actually verified to work."
+        shield_card.pack_start(
+            self._create_toggle_row(
+                "🔗 Strip Tracking Parameters (ClearURLs)",
+                "Removes utm_*, fbclid, gclid, and other analytics parameters from URLs.",
+                self.clearurls_enabled,
+                lambda act: (setattr(self, 'clearurls_enabled', act), self.save_settings())
+            ),
+            False, False, 0
         )
-        chk_low_memory.set_active(self.low_memory_mode)
-        chk_low_memory.connect("toggled", lambda cb: self.on_low_memory_mode_toggled(cb.get_active()))
-        advanced_box.pack_start(chk_low_memory, False, False, 0)
-
-        low_memory_hint = Gtk.Label(xalign=0.0)
-        low_memory_hint.set_markup("<small>Reduces WebKit's cache size immediately, no restart needed.</small>")
-        low_memory_hint.get_style_context().add_class("settings-hint-label")
-        advanced_box.pack_start(low_memory_hint, False, False, 0)
-
-        chk_tab_suspension = Gtk.CheckButton(label="😴 Suspend Inactive Background Tabs")
-        chk_tab_suspension.set_tooltip_text(
-            "Frees most of a background tab's memory after 15 minutes of "
-            "inactivity by unloading its page content — the tab, its title, "
-            "and its back/forward history stay intact and reload instantly "
-            "when you switch back to it. Never suspends the tab you're "
-            "looking at, one that's still loading, or one playing audio/video."
+        shield_card.pack_start(
+            self._create_toggle_row(
+                "🔒 HTTPS Enforcement",
+                "Automatically upgrades unencrypted HTTP connections to secure HTTPS.",
+                self.https_enabled,
+                lambda act: (setattr(self, 'https_enabled', act), self.save_settings())
+            ),
+            False, False, 0
         )
-        chk_tab_suspension.set_active(self.tab_suspension_enabled)
-        chk_tab_suspension.connect(
-            "toggled",
-            lambda cb: (setattr(self, 'tab_suspension_enabled', cb.get_active()), self.save_settings())
+        shield_card.pack_start(
+            self._create_toggle_row(
+                "🎥 WebRTC / Camera & Mic Access",
+                "Off by default — WebRTC can leak your real local IP address even when using VPN.",
+                self.webrtc_enabled,
+                lambda act: self.on_webrtc_toggled(act)
+            ),
+            False, False, 0
         )
-        advanced_box.pack_start(chk_tab_suspension, False, False, 0)
+        priv_box.pack_start(shield_card, False, False, 0)
 
-        # --- Actions -------------------------------------------------------
-        actions_frame, actions_box = self._settings_section("Actions")
-        vbox.pack_start(actions_frame, False, False, 0)
+        hist_card = self._create_setting_card("HISTORY & DISPLAY PRIVACY")
+        hist_card.pack_start(
+            self._create_toggle_row(
+                "🧹 Clear Browsing History on Exit",
+                "Automatically wipes browsing history and autocomplete suggestions when exiting.",
+                self.clear_history_on_exit,
+                lambda act: (setattr(self, 'clear_history_on_exit', act), self.save_settings())
+            ),
+            False, False, 0
+        )
+        hist_card.pack_start(
+            self._create_toggle_row(
+                "🌙 DarkReader High-Contrast Engine",
+                "Applies smart dark contrast stylesheets to all visited webpages.",
+                self.dark_mode_active,
+                lambda act: self.on_dark_clicked(self.btn_dark)
+            ),
+            False, False, 0
+        )
+        priv_box.pack_start(hist_card, False, False, 0)
+        stack.add_titled(priv_scroller, "privacy", "🛡️ Privacy")
 
-        btn_history = Gtk.Button(label="📊 Show History")
-        btn_history.set_tooltip_text("Ctrl+H")
-        btn_history.connect("clicked", lambda b: (self.open_history_tab(), dialog.destroy()))
-        actions_box.pack_start(btn_history, False, False, 0)
+        # --- Tab 3: Performance & Advanced --------------------------------
+        perf_scroller, perf_box = _create_scrollable_page()
 
-        btn_clear = Gtk.Button(label="🗑️ Clear Browsing History & Cookies")
+        perf_card = self._create_setting_card("RESOURCE OPTIMIZATION")
+        perf_card.pack_start(
+            self._create_toggle_row(
+                "😴 Suspend Inactive Background Tabs",
+                "Frees memory by unloading background tabs inactive for 15+ minutes while keeping history intact.",
+                self.tab_suspension_enabled,
+                lambda act: (setattr(self, 'tab_suspension_enabled', act), self.save_settings())
+            ),
+            False, False, 0
+        )
+        perf_card.pack_start(
+            self._create_toggle_row(
+                "🪶 Low Memory Mode",
+                "Shrinks WebKit page cache size immediately for systems with limited RAM.",
+                self.low_memory_mode,
+                lambda act: self.on_low_memory_mode_toggled(act)
+            ),
+            False, False, 0
+        )
+        perf_box.pack_start(perf_card, False, False, 0)
+
+        dev_card = self._create_setting_card("DEVELOPER TOOLS")
+        dev_card.pack_start(
+            self._create_toggle_row(
+                "🛠️ Developer Tools (Web Inspector)",
+                "Enables right-click Inspect Element and developer debugging tools.",
+                self.dev_tools_enabled,
+                lambda act: self.on_devtools_toggled(act)
+            ),
+            False, False, 0
+        )
+        perf_box.pack_start(dev_card, False, False, 0)
+        stack.add_titled(perf_scroller, "performance", "⚡ Performance")
+
+        # --- Tab 4: Data & Actions ----------------------------------------
+        act_scroller, act_box = _create_scrollable_page()
+
+        data_card = self._create_setting_card("BROWSING DATA MANAGEMENT")
+        btn_hist = Gtk.Button(label="📊 Open Browsing History Dashboard (Ctrl+H)")
+        btn_hist.get_style_context().add_class("settings-action-btn")
+        btn_hist.connect("clicked", lambda b: (self.open_history_tab(), dialog.destroy()))
+        data_card.pack_start(btn_hist, False, False, 0)
+
+        btn_clear = Gtk.Button(label="🗑️ Clear Browsing History & Cookies Now")
+        btn_clear.get_style_context().add_class("settings-danger-btn")
         btn_clear.connect("clicked", self.on_clear_cache_clicked)
-        actions_box.pack_start(btn_clear, False, False, 0)
+        data_card.pack_start(btn_clear, False, False, 0)
+        act_box.pack_start(data_card, False, False, 0)
 
-        btn_private = Gtk.Button(label="🕵 New Private Window (Ctrl+Shift+N)")
+        window_card = self._create_setting_card("WINDOW & NAVIGATION")
+        btn_private = Gtk.Button(label="🕵 Open New Private Window (Ctrl+Shift+N)")
+        btn_private.get_style_context().add_class("settings-action-btn")
         btn_private.connect("clicked", lambda b: (self.open_private_window(), dialog.destroy()))
-        actions_box.pack_start(btn_private, False, False, 0)
+        window_card.pack_start(btn_private, False, False, 0)
+        act_box.pack_start(window_card, False, False, 0)
 
-        about_lbl = Gtk.Label(label=f"Bharat Browser v{self.current_version} | Engineered in INDIA 🇮🇳")
+        about_card = self._create_setting_card("ABOUT BHARAT BROWSER")
+        about_lbl = Gtk.Label(xalign=0.0)
+        about_lbl.set_markup(
+            f"<b>Bharat Browser v{self.current_version}</b>\n"
+            f"<small>Modern, Ultra-Fast & Privacy-First Linux Browser\n"
+            f"Engineered in INDIA 🇮🇳</small>"
+        )
         about_lbl.get_style_context().add_class("settings-hint-label")
-        vbox.pack_start(about_lbl, False, False, 4)
+        about_card.pack_start(about_lbl, False, False, 0)
+        act_box.pack_start(about_card, False, False, 0)
+
+        stack.add_titled(act_scroller, "actions", "🗄️ Data & Actions")
 
         dialog.show_all()
         dialog.run()

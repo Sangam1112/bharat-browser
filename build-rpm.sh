@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.36"
+VERSION="1.2.37"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,13 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Mon Sep 28 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.37-1
+- Add "Clear browsing history on exit" privacy tick box feature (automatically
+  clears browsing history and URL autocomplete cache on window close)
+- Reorganize Settings dialog into modern categorized tabs (General, Privacy &
+  Security, Performance & Advanced, Data & Actions) with clean card-based layouts
+- Synchronize versions across .deb and .rpm release packages
+
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.36-1
 - Add background tab suspension: tabs inactive for 15+ minutes are
   automatically unloaded (WebKit session state saved via
@@ -130,7 +137,7 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
   history entry's recorded title) always reflect the real title once
   WebKit reports it, not just whatever was available at FINISHED
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.30-1
-- Verified the .deb package with real `apt install` runs inside actual
+- Verified the .deb package with real 'apt install' runs inside actual
   Ubuntu 22.04 and 24.04 containers (podman): full dependency resolution,
   dpkg --verify passes, and the installed Python module imports cleanly
   with real GTK3/WebKit2GTK bindings present
@@ -141,7 +148,7 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
   that turned out to be inaccurate
 * Sun Sep 27 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.29-1
 - Add build-deb.sh and a shipped .deb package (bharat-browser_1.2.29-1_all.deb)
-  for native `sudo apt install ./file.deb` installation on Ubuntu/Debian,
+  for native 'sudo apt install ./file.deb' installation on Ubuntu/Debian,
   in addition to the existing install-ubuntu.sh script. Built by hand with
   ar/tar rather than dpkg-deb so it doesn't require Debian packaging tools
   on the (Fedora) build machine
