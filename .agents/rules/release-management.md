@@ -17,4 +17,5 @@ description: Bharat Browser release management and version synchronization stand
 
 ## 2. Settings & Dialog UI Architecture
 - Prefer categorized `Gtk.Stack` + `Gtk.StackSwitcher` interfaces for complex settings dialogs over long vertical scroll views.
+- Always pack both `Gtk.StackSwitcher` AND `Gtk.Stack` with `pack_start(stack, True, True, 0)` into the parent dialog container.
 - Group related options into `.settings-card` boxes with consistent padding and subtitle hints.
