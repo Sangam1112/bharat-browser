@@ -2034,6 +2034,48 @@ class BharatBrowserWindow(Gtk.Window):
             print("Git update check note:", e)
             GLib.idle_add(self.show_latest_version_notification)
 
+    def check_for_updates_interactive(self, status_lbl, btn_check, btn_restart):
+        """User-triggered update check from Settings. Updates the status label,
+        downloads and installs the update if available, and offers a restart button."""
+        btn_check.set_sensitive(False)
+        status_lbl.set_markup("<i>🔄 Connecting to GitHub and checking for updates...</i>")
+        btn_restart.hide()
+
+        def _worker():
+            try:
+                url = "https://raw.githubusercontent.com/Sangam1112/bharat-browser/master/package.json"
+                req = urllib.request.Request(url, headers={"User-Agent": f"BharatBrowser/{self.current_version}"})
+                with urllib.request.urlopen(req, timeout=8) as response:
+                    if response.status != 200:
+                        GLib.idle_add(_done, f"❌ Server returned HTTP {response.status}", False, True)
+                        return
+                    data = json.loads(response.read(1 << 20).decode('utf-8'))
+                    remote_version = data.get("version", "").strip()
+                    remote_sha256 = data.get("sha256", "").strip().lower()
+
+                if not remote_version or self.compare_versions(remote_version, self.current_version) <= 0:
+                    GLib.idle_add(_done, f"✅ Bharat Browser is up to date (v{self.current_version}).", False, True)
+                    return
+
+                GLib.idle_add(lambda: status_lbl.set_markup(f"<i>⬇️ New version v{remote_version} found! Downloading update...</i>"))
+                installed = self.download_and_install_update(remote_version, remote_sha256)
+                if installed:
+                    GLib.idle_add(_done, f"🎉 Version v{remote_version} installed successfully! Click 'Restart Now' to apply.", True, True)
+                    GLib.idle_add(self.show_update_notification_dialog, remote_version, True)
+                else:
+                    GLib.idle_add(_done, f"⬆️ Version v{remote_version} is available on GitHub (Install via package manager or git pull).", False, True)
+                    GLib.idle_add(self.show_update_notification_dialog, remote_version, False)
+            except Exception as e:
+                GLib.idle_add(_done, f"❌ Update check failed: {str(e)}", False, True)
+
+        def _done(msg, show_restart, enable_btn):
+            status_lbl.set_markup(f"<b>{GLib.markup_escape_text(msg)}</b>" if "✅" in msg or "🎉" in msg else GLib.markup_escape_text(msg))
+            btn_check.set_sensitive(enable_btn)
+            if show_restart:
+                btn_restart.show()
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     MAX_UPDATE_SOURCE_BYTES = 5 * 1024 * 1024  # sanity cap; the script is ~60KB today
 
     def download_and_install_update(self, remote_version, remote_sha256=""):
@@ -2886,7 +2928,7 @@ class BharatBrowserWindow(Gtk.Window):
         window_card.pack_start(btn_private, False, False, 0)
         act_box.pack_start(window_card, False, False, 0)
 
-        about_card = self._create_setting_card("ABOUT BHARAT BROWSER")
+        about_card = self._create_setting_card("UPDATES & ABOUT BHARAT BROWSER")
         about_lbl = Gtk.Label(xalign=0.0)
         about_lbl.set_markup(
             f"<b>Bharat Browser v{self.current_version}</b>\n"
@@ -2895,6 +2937,31 @@ class BharatBrowserWindow(Gtk.Window):
         )
         about_lbl.get_style_context().add_class("settings-hint-label")
         about_card.pack_start(about_lbl, False, False, 0)
+
+        about_card.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 2)
+
+        update_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        btn_check_update = Gtk.Button(label="🔄 Check for Updates on GitHub")
+        btn_check_update.get_style_context().add_class("settings-action-btn")
+        update_vbox.pack_start(btn_check_update, False, False, 0)
+
+        update_status_lbl = Gtk.Label(xalign=0.0)
+        update_status_lbl.get_style_context().add_class("settings-hint-label")
+        update_status_lbl.set_line_wrap(True)
+        update_vbox.pack_start(update_status_lbl, False, False, 0)
+
+        btn_restart_applied = Gtk.Button(label="🚀 Restart Now to Apply Update")
+        btn_restart_applied.get_style_context().add_class("settings-action-btn")
+        btn_restart_applied.set_no_show_all(True)
+        btn_restart_applied.hide()
+        btn_restart_applied.connect("clicked", lambda b: (dialog.destroy(), self.restart_application()))
+        update_vbox.pack_start(btn_restart_applied, False, False, 0)
+
+        btn_check_update.connect(
+            "clicked",
+            lambda b: self.check_for_updates_interactive(update_status_lbl, btn_check_update, btn_restart_applied)
+        )
+        about_card.pack_start(update_vbox, False, False, 0)
         act_box.pack_start(about_card, False, False, 0)
 
         stack.add_titled(act_scroller, "actions", "🗄️ Data & Actions")
