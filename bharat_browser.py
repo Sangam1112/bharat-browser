@@ -2709,6 +2709,7 @@ class BharatBrowserWindow(Gtk.Window):
         stack_switcher.set_halign(Gtk.Align.CENTER)
         stack_switcher.get_style_context().add_class("settings-stack-switcher")
         main_box.pack_start(stack_switcher, False, False, 0)
+        main_box.pack_start(stack, True, True, 0)
 
         def _create_scrollable_page():
             scroller = Gtk.ScrolledWindow()
