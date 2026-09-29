@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.38 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.39 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -55,7 +55,7 @@ try:
 except ValueError:
     gi.require_version('WebKit2', '4.0')
 
-from gi.repository import Gtk, Gdk, WebKit2, GLib, Gio, GdkPixbuf
+from gi.repository import Gtk, Gdk, WebKit2, GLib, Gio
 
 # Import high-rating open-source ad-blocking engine (adblockparser) if available
 for adblock_path in [
@@ -338,11 +338,24 @@ def save_url_history(entries):
     except Exception as e:
         print("History save note:", e)
 
+_GPU_INFO_CACHE = None
+
 def detect_gpu_info():
     """Best-effort GPU identification for the Settings 'GPU Acceleration' card.
     Tries glxinfo first since it reports the actual OpenGL renderer WebKit's
     compositor will use (and whether it's really hardware-accelerated),
-    falling back to lspci's PCI device name. Never raises — display text only."""
+    falling back to lspci's PCI device name. Never raises — display text only.
+    Cached at module scope: the GPU doesn't change mid-session, so every new
+    window (including private windows) reuses the first result instead of
+    re-running subprocess calls — each with its own multi-second timeout —
+    on every single window open."""
+    global _GPU_INFO_CACHE
+    if _GPU_INFO_CACHE is not None:
+        return _GPU_INFO_CACHE
+    _GPU_INFO_CACHE = _detect_gpu_info_uncached()
+    return _GPU_INFO_CACHE
+
+def _detect_gpu_info_uncached():
     try:
         out = subprocess.run(
             ["glxinfo", "-B"], capture_output=True, text=True, timeout=3
@@ -575,8 +588,10 @@ MEDIA_POLYFILL_JS = """
 """
 
 class BharatBrowserWindow(Gtk.Window):
+    _global_css_loaded = False
+
     def __init__(self, private=False):
-        self.current_version = "1.2.38"
+        self.current_version = "1.2.39"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -1058,6 +1073,14 @@ class BharatBrowserWindow(Gtk.Window):
         print("Native ad/tracker content-blocker compiled and active.")
 
     def apply_custom_css(self):
+        # Screen-wide CSS is process-global and identical for every window,
+        # so only the first window (main or private) needs to load it —
+        # otherwise each new window/private window added another duplicate
+        # Gtk.CssProvider to the screen's provider list forever, with no way
+        # to remove it, since GTK has no add_provider_for_screen dedup.
+        if BharatBrowserWindow._global_css_loaded:
+            return
+        BharatBrowserWindow._global_css_loaded = True
         css_provider = Gtk.CssProvider()
         css_data = b"""
         * {

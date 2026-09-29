@@ -1,8 +1,8 @@
-# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.38
+# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.2.39
 
 > **Modern, Ultra-Fast, and Privacy-First Web Browser engineered for Linux (Fedora & Ubuntu)**
 
-[![Version](https://img.shields.io/badge/version-1.2.38-blue.svg)](https://github.com/Sangam1112/bharat-browser)
+[![Version](https://img.shields.io/badge/version-1.2.39-blue.svg)](https://github.com/Sangam1112/bharat-browser)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Fedora%20%7C%20Ubuntu%20%7C%20Linux-orange.svg)]()
 [![Privacy](https://img.shields.io/badge/privacy-Strict%20Enforcement-red.svg)]()
@@ -34,7 +34,7 @@
 
 | Browser | Installer size | Installed size (approx.) |
 |---|---|---|
-| **Bharat Browser** | **~174 KB** (RPM) | **~250 KB** (app itself) |
+| **Bharat Browser** | **~187 KB** (RPM) | **~292 KB** (installed footprint) |
 | Google Chrome | ~90–100 MB | ~250–350 MB |
 | Mozilla Firefox | ~55–75 MB | ~200–300 MB |
 | Chromium | ~100–150 MB | ~300–400 MB |
@@ -45,7 +45,7 @@ That's roughly a **500–1000x** smaller installer. The reason is
 architectural, not just optimization: Chrome, Firefox, Chromium, Brave,
 and Edge each **bundle their own complete rendering engine** (Blink+V8,
 or Gecko+SpiderMonkey for Firefox) as compiled native binaries — typically
-150–250 MB by itself. Bharat Browser ships none of that: it's a ~112 KB
+150–250 MB by itself. Bharat Browser ships none of that: it's a ~142 KB
 Python/GTK3 script that calls into **WebKit2GTK**, a system library most
 Linux desktops already have installed for other GTK apps, rather than a
 bundled-per-app engine. Same WebKit rendering family as Safari — the
@@ -72,18 +72,18 @@ cd bharat-browser
 ./install-fedora.sh
 ```
 
-**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.38_fedora.tar.gz`)**
+**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.2.39_fedora.tar.gz`)**
 ```bash
 # 1. Extract the release archive
-tar -xzf bharat-browser_1.2.38_fedora.tar.gz -C /tmp/bharat_fedora
+tar -xzf bharat-browser_1.2.39_fedora.tar.gz -C /tmp/bharat_fedora
 
 # 2. Run installer script from archive
 cd /tmp/bharat_fedora && ./install-fedora.sh
 ```
 
-**Option C: Install the RPM directly (`bharat-browser-1.2.38-1.fc44.noarch.rpm`)**
+**Option C: Install the RPM directly (`bharat-browser-1.2.39-1.fc44.noarch.rpm`)**
 ```bash
-sudo dnf install ./bharat-browser-1.2.38-1.fc44.noarch.rpm
+sudo dnf install ./bharat-browser-1.2.39-1.fc44.noarch.rpm
 ```
 
 ### 🟠 Ubuntu / Debian Linux Installation
@@ -98,9 +98,9 @@ cd bharat-browser
 ./install-ubuntu.sh
 ```
 
-**Option B: Install the .deb directly (`bharat-browser_1.2.38-1_all.deb`)**
+**Option B: Install the .deb directly (`bharat-browser_1.2.39-1_all.deb`)**
 ```bash
-sudo apt install ./bharat-browser_1.2.38-1_all.deb
+sudo apt install ./bharat-browser_1.2.39-1_all.deb
 ```
 `apt install ./file.deb` (not `dpkg -i`) so `apt` resolves and installs
 the GTK3/WebKit2GTK dependencies automatically. This always installs
@@ -168,25 +168,6 @@ Run from terminal:
 bharat-browser
 ```
 Or launch **Bharat Browser** directly from your desktop application launcher menu.
-
----
-
-## 🩺 Resource Monitoring (for diagnosing memory/CPU reports)
-
-`tools/monitor-resources.py` is a standalone, dependency-free diagnostic
-script (developer tool, not part of the shipped packages) that tracks a
-running Bharat Browser's full process group — the main process plus every
-WebKit subprocess it spawns (WebProcess/NetworkProcess/GPU process) — and
-logs RSS memory and CPU% per process to a CSV file over time.
-
-```bash
-python3 tools/monitor-resources.py                # sample every 2s until Ctrl+C
-python3 tools/monitor-resources.py --interval 5 --duration 300 --output run.csv
-```
-
-Useful for reproducing and diagnosing real-world memory/"system overload"
-reports (e.g. this is how the v1.2.33 per-tab JavaScript CPU fixes were
-measured and verified).
 
 ---
 

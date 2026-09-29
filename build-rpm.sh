@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.38"
+VERSION="1.2.39"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,14 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Tue Sep 29 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.39-1
+- Fix Gtk.CssProvider leak: every new window (including private windows)
+  added a duplicate process-wide CSS provider that was never removed;
+  now loaded once per process
+- Cache GPU detection at module scope instead of re-running glxinfo/lspci
+  subprocess calls (each with its own timeout) on every window open
+- Remove unused GdkPixbuf import
+
 * Tue Sep 29 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.38-1
 - Add GPU Acceleration toggle to Settings > Performance: detects the system
   GPU and lets the compositor, canvas, and WebGL render on it (lower RAM/CPU
