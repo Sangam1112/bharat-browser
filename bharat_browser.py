@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.39 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.40 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -55,7 +55,7 @@ try:
 except ValueError:
     gi.require_version('WebKit2', '4.0')
 
-from gi.repository import Gtk, Gdk, WebKit2, GLib, Gio
+from gi.repository import Gtk, Gdk, WebKit2, GLib, Gio, Pango
 
 # Import high-rating open-source ad-blocking engine (adblockparser) if available
 for adblock_path in [
@@ -591,7 +591,7 @@ class BharatBrowserWindow(Gtk.Window):
     _global_css_loaded = False
 
     def __init__(self, private=False):
-        self.current_version = "1.2.39"
+        self.current_version = "1.2.40"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -797,12 +797,24 @@ class BharatBrowserWindow(Gtk.Window):
             self.url_completion_store.append([entry.get("url", ""), entry.get("title", "")])
         completion = Gtk.EntryCompletion()
         completion.set_model(self.url_completion_store)
-        completion.set_text_column(0)
         completion.set_minimum_key_length(1)
         completion.set_popup_completion(True)
         completion.set_inline_completion(False)
         completion.set_match_func(self._url_completion_match, None)
+        # The popup is a native window sized to its widest row, and GDK
+        # can't create one wider than 32767px: a single very long history
+        # URL (e.g. a 5000-char search URL) used to make GTK's Wayland
+        # backend dereference a NULL cairo surface and segfault. Ellipsize
+        # both columns instead of using set_text_column(), which installs an
+        # unbounded renderer. The model still holds the full URL/title.
+        url_cell = Gtk.CellRendererText()
+        url_cell.set_property("ellipsize", Pango.EllipsizeMode.END)
+        url_cell.set_property("max-width-chars", 90)
+        completion.pack_start(url_cell, True)
+        completion.add_attribute(url_cell, "text", 0)
         title_cell = Gtk.CellRendererText()
+        title_cell.set_property("ellipsize", Pango.EllipsizeMode.END)
+        title_cell.set_property("max-width-chars", 40)
         completion.pack_start(title_cell, False)
         completion.add_attribute(title_cell, "text", 1)
         title_cell.set_property("scale", 0.85)

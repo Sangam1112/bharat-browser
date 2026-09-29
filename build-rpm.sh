@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.39"
+VERSION="1.2.40"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,12 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Wed Sep 30 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.40-1
+- Fix crash on Wayland: a very long history URL made the URL-bar
+  autocomplete popup wider than GDK's 32767px native window limit, so GTK
+  dereferenced a NULL cairo surface and segfaulted. Autocomplete rows are
+  now ellipsized (full URL/title still stored and matched)
+
 * Tue Sep 29 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.39-1
 - Fix Gtk.CssProvider leak: every new window (including private windows)
   added a duplicate process-wide CSS provider that was never removed;
