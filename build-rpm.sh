@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.41"
+VERSION="1.3.0"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,17 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Wed Sep 30 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.3.0-1
+- Downloads Manager: choose the folder downloads are saved to (Change /
+  Reset); falls back to the default folder if the chosen one is not writable
+- Bookmarks: star in the address bar and Ctrl+D to bookmark/unbookmark the
+  current page; Bookmark Manager (toolbar button, Ctrl+Shift+O) with search,
+  open, rename and delete. Not saved in private windows
+- Dark mode is now a WebKit user stylesheet applied by the engine to every
+  page a tab loads, instead of a one-shot script at load-finished: no white
+  flash, survives pages that rewrite <head>, and stays on across navigation,
+  new tabs and restarts until toggled off
+
 * Wed Sep 30 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.41-1
 - Fix dark mode on sites with a transparent page background (e.g.
   economictimes.indiatimes.com): the html background was set to #121212 but

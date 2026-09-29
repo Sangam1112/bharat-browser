@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.41 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.3.0 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -240,6 +240,8 @@ CACHE_DIR = os.path.expanduser("~/.cache/bharat-browser")
 SESSION_FILE = os.path.join(CONFIG_DIR, "session.json")
 HISTORY_FILE = os.path.join(CONFIG_DIR, "history.json")
 HISTORY_MAX_ENTRIES = 500
+BOOKMARKS_FILE = os.path.join(CONFIG_DIR, "bookmarks.json")
+BOOKMARKS_MAX_ENTRIES = 5000
 
 SEARCH_ENGINES = {
     "Google": "https://www.google.com/search?q={query}",
@@ -337,6 +339,29 @@ def save_url_history(entries):
         os.replace(temp_file, HISTORY_FILE)
     except Exception as e:
         print("History save note:", e)
+
+def load_bookmarks():
+    """Returns a list of {"url":..., "title":..., "added": epoch} dicts in the
+    order they were added. Never called for private windows, matching the
+    history/session pattern."""
+    try:
+        if os.path.exists(BOOKMARKS_FILE):
+            with open(BOOKMARKS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return [b for b in data if isinstance(b, dict) and isinstance(b.get("url"), str)]
+    except Exception as e:
+        print("Bookmarks load note:", e)
+    return []
+
+def save_bookmarks(entries):
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        temp_file = BOOKMARKS_FILE + ".tmp"
+        _write_json_private(temp_file, entries)
+        os.replace(temp_file, BOOKMARKS_FILE)
+    except Exception as e:
+        print("Bookmarks save note:", e)
 
 _GPU_INFO_CACHE = None
 
@@ -594,7 +619,7 @@ class BharatBrowserWindow(Gtk.Window):
     _global_css_loaded = False
 
     def __init__(self, private=False):
-        self.current_version = "1.2.41"
+        self.current_version = "1.3.0"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -652,6 +677,7 @@ class BharatBrowserWindow(Gtk.Window):
 
         saved_settings = load_persistent_settings()
         self.dark_mode_active = saved_settings.get("dark_mode", False)
+        self.download_dir = saved_settings.get("download_dir", "") or ""
         self.adblock_enabled = saved_settings.get("adblock_enabled", True)
         self.clearurls_enabled = saved_settings.get("clearurls_enabled", True)
         self.https_enabled = saved_settings.get("https_enabled", True)
@@ -672,6 +698,7 @@ class BharatBrowserWindow(Gtk.Window):
         # URL-bar autocomplete history. Never loaded/written for private
         # windows, matching the session-state privacy guarantee.
         self.url_history = [] if self.is_private else load_url_history()
+        self.bookmarks = [] if self.is_private else load_bookmarks()
 
         self.apply_custom_css()
 
@@ -792,6 +819,7 @@ class BharatBrowserWindow(Gtk.Window):
         self.url_entry.set_placeholder_text("Search Google or enter URL...")
         self.url_entry.set_icon_from_icon_name(Gtk.EntryIconPosition.PRIMARY, "channel-insecure-symbolic")
         self.url_entry.connect("activate", self.on_url_activate)
+        self.url_entry.connect("icon-press", self.on_url_entry_icon_press)
         top_bar.pack_start(self.url_entry, True, True, 4)
 
         # Autocomplete from browsing history (url, title)
@@ -847,6 +875,12 @@ class BharatBrowserWindow(Gtk.Window):
         self.btn_dark.connect("clicked", self.on_dark_clicked)
         action_group.pack_start(self.btn_dark, False, False, 0)
 
+        self.btn_bookmarks = Gtk.Button.new_from_icon_name("user-bookmarks-symbolic", Gtk.IconSize.BUTTON)
+        self.btn_bookmarks.get_style_context().add_class("flat-icon-btn")
+        self.btn_bookmarks.set_tooltip_text("Bookmark Manager (Ctrl+Shift+O)")
+        self.btn_bookmarks.connect("clicked", lambda b: self.open_bookmark_manager())
+        action_group.pack_start(self.btn_bookmarks, False, False, 0)
+
         self.btn_downloads = Gtk.Button.new_from_icon_name("folder-download-symbolic", Gtk.IconSize.BUTTON)
         self.btn_downloads.get_style_context().add_class("flat-icon-btn")
         self.btn_downloads.set_tooltip_text("Downloads Manager")
@@ -873,6 +907,18 @@ class BharatBrowserWindow(Gtk.Window):
         # above), so build each one exactly once and hand the same instance to
         # every tab's UserContentManager instead of re-parsing/re-allocating 3
         # fresh WebKit2.UserScript objects on every single new tab.
+        # Dark mode is a WebKit UserStyleSheet, not a JS-injected <style>: it is
+        # applied by the engine when each document is created (no white flash
+        # before load-finished), survives pages that rewrite <head>/<html> and
+        # SPA navigations, and follows every navigation in the tab until it is
+        # removed. TOP_FRAME only: the filter is on <html>, so applying it inside
+        # iframes as well would invert their content twice.
+        self.dark_stylesheet = WebKit2.UserStyleSheet(
+            DARKREADER_CSS,
+            WebKit2.UserContentInjectedFrames.TOP_FRAME,
+            WebKit2.UserStyleLevel.USER,
+            None, None
+        )
         self.media_script = WebKit2.UserScript(
             MEDIA_POLYFILL_JS,
             WebKit2.UserContentInjectedFrames.ALL_FRAMES,
@@ -1489,6 +1535,8 @@ class BharatBrowserWindow(Gtk.Window):
         ucm.add_script(self.media_script)
         ucm.add_script(self.farbling_script)
         ucm.add_script(self.prefetch_script)
+        if self.dark_mode_active:
+            self._set_dark_stylesheet(ucm, True)
 
         # Signals
         webview.connect("load-changed", self.on_load_changed)
@@ -1695,6 +1743,190 @@ class BharatBrowserWindow(Gtk.Window):
         else:
             self.url_entry.set_icon_from_icon_name(Gtk.EntryIconPosition.PRIMARY, "edit-find-symbolic")
             self.url_entry.set_icon_tooltip_text(Gtk.EntryIconPosition.PRIMARY, "")
+        self.update_bookmark_star(uri)
+
+    # Bookmarks
+    @staticmethod
+    def _bookmarkable(uri):
+        return bool(uri) and uri.startswith(("http://", "https://"))
+
+    def _find_bookmark(self, uri):
+        return next((b for b in self.bookmarks if b.get("url") == uri), None)
+
+    def update_bookmark_star(self, uri):
+        """Address-bar star: filled when the current page is bookmarked.
+        Hidden for pages that can't be bookmarked (about:, data:, the history
+        dashboard) and in private windows, which never write bookmarks."""
+        pos = Gtk.EntryIconPosition.SECONDARY
+        if self.is_private or not self._bookmarkable(uri):
+            self.url_entry.set_icon_from_icon_name(pos, None)
+            return
+        if self._find_bookmark(uri):
+            self.url_entry.set_icon_from_icon_name(pos, "starred-symbolic")
+            self.url_entry.set_icon_tooltip_text(pos, "Remove bookmark (Ctrl+D)")
+        else:
+            self.url_entry.set_icon_from_icon_name(pos, "non-starred-symbolic")
+            self.url_entry.set_icon_tooltip_text(pos, "Bookmark this page (Ctrl+D)")
+        self.url_entry.set_icon_activatable(pos, True)
+
+    def on_url_entry_icon_press(self, entry, icon_pos, event):
+        if icon_pos == Gtk.EntryIconPosition.SECONDARY:
+            self.toggle_bookmark_current()
+
+    def toggle_bookmark_current(self):
+        if self.is_private:
+            self.statusbar.push(self.context_id, "Bookmarks aren't saved in private windows")
+            return
+        webview = self.get_active_webview()
+        uri = (webview.get_uri() or "") if webview else ""
+        if not self._bookmarkable(uri):
+            self.statusbar.push(self.context_id, "This page can't be bookmarked")
+            return
+        existing = self._find_bookmark(uri)
+        if existing:
+            self.bookmarks.remove(existing)
+            self.statusbar.push(self.context_id, "☆ Bookmark removed")
+        else:
+            if len(self.bookmarks) >= BOOKMARKS_MAX_ENTRIES:
+                self.statusbar.push(self.context_id, f"Bookmark limit ({BOOKMARKS_MAX_ENTRIES}) reached; remove some first")
+                return
+            title = self._resolve_display_title(webview)
+            self.bookmarks.append({"url": uri, "title": title, "added": time.time()})
+            self.statusbar.push(self.context_id, f"⭐ Bookmarked: {title}")
+        save_bookmarks(self.bookmarks)
+        self.update_bookmark_star(uri)
+
+    def open_bookmark_manager(self):
+        if self.is_private:
+            self.statusbar.push(self.context_id, "Bookmarks aren't available in private windows")
+            return
+        dialog = Gtk.Dialog(title="⭐ Bookmark Manager", transient_for=self, modal=True, destroy_with_parent=True)
+        dialog.get_style_context().add_class("bharat-dialog")
+        self.apply_dark_titlebar(dialog, "⭐ Bookmark Manager")
+        dialog.add_button("Close", Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(680, 460)
+
+        area = dialog.get_content_area()
+        for setter in (area.set_margin_start, area.set_margin_end, area.set_margin_top, area.set_margin_bottom):
+            setter(16)
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        area.pack_start(vbox, True, True, 0)
+
+        search = Gtk.SearchEntry()
+        search.set_placeholder_text("Search bookmarks…")
+        vbox.pack_start(search, False, False, 0)
+
+        # Columns: title, url, index into self.bookmarks (stable across filtering)
+        store = Gtk.ListStore(str, str, int)
+        def fill():
+            store.clear()
+            for i, b in enumerate(self.bookmarks):
+                store.append([b.get("title") or b["url"], b["url"], i])
+        fill()
+
+        def visible(model, it, _data):
+            q = search.get_text().strip().lower()
+            return not q or q in model[it][0].lower() or q in model[it][1].lower()
+        flt = store.filter_new()
+        flt.set_visible_func(visible)
+        search.connect("search-changed", lambda e: flt.refilter())
+
+        tree = Gtk.TreeView(model=flt)
+        tree.set_headers_visible(True)
+        for col_title, col_idx, width in (("Title", 0, 40), ("URL", 1, 60)):
+            cell = Gtk.CellRendererText()
+            # Ellipsize: an unbounded very long URL would otherwise size the
+            # column (and dialog) past GDK's window-size limit.
+            cell.set_property("ellipsize", Pango.EllipsizeMode.END)
+            col = Gtk.TreeViewColumn(col_title, cell, text=col_idx)
+            col.set_resizable(True)
+            col.set_expand(True)
+            tree.append_column(col)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_shadow_type(Gtk.ShadowType.IN)
+        scroller.add(tree)
+        vbox.pack_start(scroller, True, True, 0)
+
+        empty_lbl = Gtk.Label(label="No bookmarks yet. Click the ☆ in the address bar (or press Ctrl+D) on any page to add one.")
+        empty_lbl.set_line_wrap(True)
+        vbox.pack_start(empty_lbl, False, False, 0)
+
+        btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        btn_open = Gtk.Button(label="Open in New Tab")
+        btn_rename = Gtk.Button(label="Rename…")
+        btn_delete = Gtk.Button(label="Delete")
+        for b in (btn_open, btn_rename, btn_delete):
+            btn_row.pack_start(b, False, False, 0)
+        vbox.pack_start(btn_row, False, False, 0)
+
+        pending_open = []
+
+        def selected_bookmark():
+            model, it = tree.get_selection().get_selected()
+            if it is None:
+                return None
+            return self.bookmarks[model[it][2]]
+
+        def refresh_state():
+            has_any = bool(self.bookmarks)
+            empty_lbl.set_visible(not has_any)
+            sel = tree.get_selection().get_selected()[1] is not None
+            for b in (btn_open, btn_rename, btn_delete):
+                b.set_sensitive(sel)
+
+        def do_open(*_a):
+            b = selected_bookmark()
+            if b:
+                pending_open.append(b["url"])
+                dialog.response(Gtk.ResponseType.ACCEPT)
+
+        def do_rename(*_a):
+            b = selected_bookmark()
+            if not b:
+                return
+            rd = Gtk.Dialog(title="Rename bookmark", transient_for=dialog, modal=True)
+            rd.add_button("Cancel", Gtk.ResponseType.CANCEL)
+            rd.add_button("Save", Gtk.ResponseType.OK)
+            rd.set_default_response(Gtk.ResponseType.OK)
+            entry = Gtk.Entry(text=b.get("title") or b["url"])
+            entry.set_activates_default(True)
+            entry.set_width_chars(48)
+            ra = rd.get_content_area()
+            ra.set_margin_start(16); ra.set_margin_end(16); ra.set_margin_top(16); ra.set_margin_bottom(8)
+            ra.add(entry)
+            rd.show_all()
+            if rd.run() == Gtk.ResponseType.OK and entry.get_text().strip():
+                b["title"] = entry.get_text().strip()
+                save_bookmarks(self.bookmarks)
+                fill()
+            rd.destroy()
+            refresh_state()
+
+        def do_delete(*_a):
+            b = selected_bookmark()
+            if not b:
+                return
+            self.bookmarks.remove(b)
+            save_bookmarks(self.bookmarks)
+            fill()
+            refresh_state()
+            webview = self.get_active_webview()
+            if webview:
+                self.update_bookmark_star(webview.get_uri() or "")
+
+        btn_open.connect("clicked", do_open)
+        btn_rename.connect("clicked", do_rename)
+        btn_delete.connect("clicked", do_delete)
+        tree.connect("row-activated", do_open)
+        tree.get_selection().connect("changed", lambda sel: refresh_state())
+
+        dialog.show_all()
+        refresh_state()
+        empty_lbl.set_visible(not self.bookmarks)
+        result = dialog.run()
+        dialog.destroy()
+        if result == Gtk.ResponseType.ACCEPT and pending_open:
+            self.create_new_tab(pending_open[0])
 
     MAX_AUTO_RELOAD_CRASHES = 3
 
@@ -1814,6 +2046,12 @@ class BharatBrowserWindow(Gtk.Window):
             keyval = event.keyval
             if shift and keyval in (Gdk.KEY_n, Gdk.KEY_N):
                 self.open_private_window()
+                return True
+            elif shift and keyval in (Gdk.KEY_o, Gdk.KEY_O):
+                self.open_bookmark_manager()
+                return True
+            elif keyval in (Gdk.KEY_d, Gdk.KEY_D):
+                self.toggle_bookmark_current()
                 return True
             elif keyval in (Gdk.KEY_t, Gdk.KEY_T):
                 self.create_new_tab(self.homepage)
@@ -1976,11 +2214,28 @@ class BharatBrowserWindow(Gtk.Window):
         return win
 
     # Download Manager Handlers
-    def get_downloads_dir(self):
+    def default_downloads_dir(self):
         xdg_dir = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
         downloads_dir = xdg_dir or os.path.expanduser("~/Downloads")
         os.makedirs(downloads_dir, exist_ok=True)
         return downloads_dir
+
+    def get_downloads_dir(self):
+        """The user's chosen folder (Downloads Manager > Change Folder), or the
+        system default. A chosen folder that has since been deleted is
+        recreated; one that can't be written to (unmounted drive, changed
+        permissions) falls back to the default instead of failing every
+        download."""
+        custom = os.path.expanduser(self.download_dir) if self.download_dir else ""
+        if custom:
+            try:
+                os.makedirs(custom, exist_ok=True)
+                if os.access(custom, os.W_OK | os.X_OK):
+                    return custom
+            except OSError as e:
+                print("Download folder note:", e)
+            self.statusbar.push(self.context_id, f"⚠️ Download folder {custom} is not writable; using the default folder")
+        return self.default_downloads_dir()
 
     def unique_download_path(self, downloads_dir, filename):
         target_path = os.path.join(downloads_dir, filename)
@@ -2034,7 +2289,7 @@ class BharatBrowserWindow(Gtk.Window):
         dialog.get_style_context().add_class("bharat-dialog")
         self.apply_dark_titlebar(dialog, "📥 Downloads Manager")
         dialog.add_button("Close", Gtk.ResponseType.CLOSE)
-        dialog.set_default_size(460, 320)
+        dialog.set_default_size(520, 400)
 
         content_area = dialog.get_content_area()
         content_area.set_margin_start(16)
@@ -2058,6 +2313,53 @@ class BharatBrowserWindow(Gtk.Window):
                 name_lbl = Gtk.Label(label=f"📄 {item['filename']} [{item['status']}]")
                 hbox.pack_start(name_lbl, True, True, 0)
                 vbox.pack_start(hbox, False, False, 2)
+
+        lbl_folder_title = Gtk.Label(label="Save downloads to:", xalign=0.0)
+        vbox.pack_start(lbl_folder_title, False, False, 0)
+        folder_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        lbl_folder = Gtk.Label(label=self.get_downloads_dir(), xalign=0.0)
+        lbl_folder.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        lbl_folder.set_selectable(True)
+        folder_row.pack_start(lbl_folder, True, True, 0)
+        btn_change_folder = Gtk.Button(label="Change…")
+        btn_reset_folder = Gtk.Button(label="Reset")
+        folder_row.pack_start(btn_change_folder, False, False, 0)
+        folder_row.pack_start(btn_reset_folder, False, False, 0)
+        vbox.pack_start(folder_row, False, False, 0)
+
+        def refresh_folder_label():
+            lbl_folder.set_text(self.get_downloads_dir())
+            btn_reset_folder.set_sensitive(bool(self.download_dir))
+
+        def on_change_folder(_btn):
+            chooser = Gtk.FileChooserDialog(
+                title="Choose download folder",
+                transient_for=dialog,
+                action=Gtk.FileChooserAction.SELECT_FOLDER,
+            )
+            chooser.add_button("Cancel", Gtk.ResponseType.CANCEL)
+            chooser.add_button("Select", Gtk.ResponseType.ACCEPT)
+            chooser.set_create_folders(True)
+            chooser.set_current_folder(self.get_downloads_dir())
+            if chooser.run() == Gtk.ResponseType.ACCEPT:
+                chosen = chooser.get_filename()
+                if chosen and os.access(chosen, os.W_OK | os.X_OK):
+                    self.download_dir = chosen
+                    self.save_settings()
+                    self.statusbar.push(self.context_id, f"📁 Downloads will be saved to {chosen}")
+                else:
+                    self.statusbar.push(self.context_id, "⚠️ That folder isn't writable; download folder unchanged")
+            chooser.destroy()
+            refresh_folder_label()
+
+        def on_reset_folder(_btn):
+            self.download_dir = ""
+            self.save_settings()
+            refresh_folder_label()
+
+        btn_change_folder.connect("clicked", on_change_folder)
+        btn_reset_folder.connect("clicked", on_reset_folder)
+        btn_reset_folder.set_sensitive(bool(self.download_dir))
 
         btn_open_folder = Gtk.Button(label="📁 Open Downloads Folder")
         btn_open_folder.connect("clicked", lambda b: subprocess.Popen(["xdg-open", self.get_downloads_dir()]))
@@ -2599,9 +2901,9 @@ class BharatBrowserWindow(Gtk.Window):
                 self.record_history_entry(uri, self._resolve_display_title(webview))
                 self._start_page_view(webview, uri)
 
-            # Injections
-            if self.dark_mode_active:
-                self.apply_dark_reader_to_webview(webview)
+            # Dark mode needs no per-load work: the UserStyleSheet added in
+            # create_new_tab()/apply_dark_reader_to_webview() applies to every
+            # document this webview loads.
 
     def save_settings(self):
         save_persistent_settings({
@@ -2618,7 +2920,8 @@ class BharatBrowserWindow(Gtk.Window):
             "low_memory_mode": self.low_memory_mode,
             "tab_suspension_enabled": self.tab_suspension_enabled,
             "clear_history_on_exit": self.clear_history_on_exit,
-            "gpu_acceleration_enabled": self.gpu_acceleration_enabled
+            "gpu_acceleration_enabled": self.gpu_acceleration_enabled,
+            "download_dir": self.download_dir
         })
 
     def on_dark_clicked(self, btn):
@@ -2649,29 +2952,23 @@ class BharatBrowserWindow(Gtk.Window):
             except Exception as e:
                 print("JS execution note:", e)
 
+    def _set_dark_stylesheet(self, ucm, enabled):
+        # Flag lives on the content manager, not the webview: a popup opened
+        # via on_create_webview() shares its opener's manager, and adding or
+        # removing the same sheet twice there would leave it half-applied.
+        if getattr(ucm, "_bharat_dark_applied", False) == enabled:
+            return
+        if enabled:
+            ucm.add_style_sheet(self.dark_stylesheet)
+        else:
+            ucm.remove_style_sheet(self.dark_stylesheet)
+        ucm._bharat_dark_applied = enabled
+
     def apply_dark_reader_to_webview(self, webview):
-        js = f"""
-        (function() {{
-            var id = 'bharat-darkreader-style';
-            var existing = document.getElementById(id);
-            if (!existing) {{
-                var style = document.createElement('style');
-                style.id = id;
-                style.innerHTML = `{DARKREADER_CSS}`;
-                document.head.appendChild(style);
-            }}
-        }})();
-        """
-        self.execute_js_on_webview(webview, js)
+        self._set_dark_stylesheet(webview.get_user_content_manager(), True)
 
     def remove_dark_reader_from_webview(self, webview):
-        js = """
-        (function() {
-            var el = document.getElementById('bharat-darkreader-style');
-            if (el) el.remove();
-        })();
-        """
-        self.execute_js_on_webview(webview, js)
+        self._set_dark_stylesheet(webview.get_user_content_manager(), False)
 
     def on_screenshot_clicked(self, btn):
         webview = self.get_active_webview()
