@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.40"
+VERSION="1.2.41"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,14 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Wed Sep 30 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.41-1
+- Fix dark mode on sites with a transparent page background (e.g.
+  economictimes.indiatimes.com): the html background was set to #121212 but
+  the invert filter also inverted it to light grey, leaving pale text on
+  grey; it is now white so it inverts to dark
+- Fix About text in Settings not rendering: a bare '&' in the Pango markup
+  made GTK drop the label
+
 * Wed Sep 30 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.40-1
 - Fix crash on Wayland: a very long history URL made the URL-bar
   autocomplete popup wider than GDK's 32767px native window limit, so GTK

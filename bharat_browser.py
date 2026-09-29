@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.40 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.41 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -477,7 +477,10 @@ PREFETCH_USER_SCRIPT = """
 DARKREADER_CSS = """
 html {
     filter: invert(90%) hue-rotate(180deg) !important;
-    background-color: #121212 !important;
+    /* The invert filter applies to html's own background too, so this must
+       be the pre-inversion colour: white inverts (90%) to a dark #191919,
+       whereas #121212 would flip to light grey behind transparent pages. */
+    background-color: #ffffff !important;
 }
 img, video, canvas, svg, [style*="background-image"] {
     filter: invert(111%) hue-rotate(180deg) !important;
@@ -591,7 +594,7 @@ class BharatBrowserWindow(Gtk.Window):
     _global_css_loaded = False
 
     def __init__(self, private=False):
-        self.current_version = "1.2.40"
+        self.current_version = "1.2.41"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -3034,7 +3037,7 @@ class BharatBrowserWindow(Gtk.Window):
         about_lbl = Gtk.Label(xalign=0.0)
         about_lbl.set_markup(
             f"<b>Bharat Browser v{self.current_version}</b>\n"
-            f"<small>Modern, Ultra-Fast & Privacy-First Linux Browser\n"
+            f"<small>Modern, Ultra-Fast &amp; Privacy-First Linux Browser\n"
             f"Engineered in INDIA 🇮🇳</small>"
         )
         about_lbl.get_style_context().add_class("settings-hint-label")
