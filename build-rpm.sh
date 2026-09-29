@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.2.37"
+VERSION="1.2.38"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,11 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Tue Sep 29 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.38-1
+- Add GPU Acceleration toggle to Settings > Performance: detects the system
+  GPU and lets the compositor, canvas, and WebGL render on it (lower RAM/CPU
+  use) instead of falling back to software rendering, with an on/off switch
+
 * Mon Sep 28 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.2.37-1
 - Add "Clear browsing history on exit" privacy tick box feature (automatically
   clears browsing history and URL autocomplete cache on window close)

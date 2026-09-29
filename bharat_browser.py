@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.2.37 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.2.38 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -338,6 +338,38 @@ def save_url_history(entries):
     except Exception as e:
         print("History save note:", e)
 
+def detect_gpu_info():
+    """Best-effort GPU identification for the Settings 'GPU Acceleration' card.
+    Tries glxinfo first since it reports the actual OpenGL renderer WebKit's
+    compositor will use (and whether it's really hardware-accelerated),
+    falling back to lspci's PCI device name. Never raises — display text only."""
+    try:
+        out = subprocess.run(
+            ["glxinfo", "-B"], capture_output=True, text=True, timeout=3
+        ).stdout
+        renderer = re.search(r"OpenGL renderer string:\s*(.+)", out)
+        direct = re.search(r"direct rendering:\s*(.+)", out)
+        if renderer:
+            label = renderer.group(1).strip()
+            if direct and not direct.group(1).strip().lower().startswith("yes"):
+                label += " (no direct rendering — software fallback)"
+            return label
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(
+            ["lspci", "-nn"], capture_output=True, text=True, timeout=3
+        ).stdout
+        for line in out.splitlines():
+            if re.search(r"VGA compatible controller|3D controller|Display controller", line):
+                match = re.search(r":\s*(.+?)\s*\[[0-9a-f]{4}:[0-9a-f]{4}\](?:\s*\(rev.*\))?\s*$", line)
+                if match:
+                    return match.group(1).strip()
+                return line.split(":", 2)[-1].strip()
+    except Exception:
+        pass
+    return "Unknown GPU (detection unavailable)"
+
 # Anti-Fingerprinting Farbling Engine JS
 # Registered as a UserScript with START injection time so it patches
 # canvas/WebGL/navigator APIs before any page script can read the originals.
@@ -544,7 +576,7 @@ MEDIA_POLYFILL_JS = """
 
 class BharatBrowserWindow(Gtk.Window):
     def __init__(self, private=False):
-        self.current_version = "1.2.37"
+        self.current_version = "1.2.38"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -616,6 +648,8 @@ class BharatBrowserWindow(Gtk.Window):
         self.low_memory_mode = saved_settings.get("low_memory_mode", False)
         self.tab_suspension_enabled = saved_settings.get("tab_suspension_enabled", True)
         self.clear_history_on_exit = saved_settings.get("clear_history_on_exit", False)
+        self.gpu_acceleration_enabled = saved_settings.get("gpu_acceleration_enabled", True)
+        self.gpu_info_label = detect_gpu_info()
 
         # URL-bar autocomplete history. Never loaded/written for private
         # windows, matching the session-state privacy guarantee.
@@ -673,7 +707,21 @@ class BharatBrowserWindow(Gtk.Window):
         # one, but current WebKitGTK (2.4x+) has deprecated it and treats it as
         # identical to ALWAYS (logs a warning and changes nothing), so there's
         # no real per-tab saving available at this settings layer today.
-        self.web_settings.set_hardware_acceleration_policy(WebKit2.HardwareAccelerationPolicy.ALWAYS)
+        # GPU Acceleration toggle (Settings > Performance): when on, page
+        # compositing/canvas/WebGL are rendered on the GPU instead of raster
+        # buffers in system RAM, which is the actual memory saving here (not
+        # the always-on WEBKIT_FORCE_COMPOSITING_MODE env var above, which is
+        # left untouched since it's required just to get direct rendering at
+        # all on this WebKit version). When off, everything falls back to
+        # CPU/software rendering — useful on systems with broken/blacklisted
+        # GPU drivers, at the cost of higher RAM/CPU use.
+        self.web_settings.set_hardware_acceleration_policy(
+            WebKit2.HardwareAccelerationPolicy.ALWAYS if self.gpu_acceleration_enabled
+            else WebKit2.HardwareAccelerationPolicy.NEVER
+        )
+        self.web_settings.set_enable_webgl(self.gpu_acceleration_enabled)
+        if hasattr(self.web_settings, 'set_enable_2d_canvas_acceleration'):
+            self.web_settings.set_enable_2d_canvas_acceleration(self.gpu_acceleration_enabled)
         if hasattr(self.web_settings, 'set_enable_smooth_scrolling'):
             self.web_settings.set_enable_smooth_scrolling(True)
         self.web_settings.set_enable_html5_database(True)
@@ -2531,7 +2579,8 @@ class BharatBrowserWindow(Gtk.Window):
             "first_run_greeted": self.first_run_greeted,
             "low_memory_mode": self.low_memory_mode,
             "tab_suspension_enabled": self.tab_suspension_enabled,
-            "clear_history_on_exit": self.clear_history_on_exit
+            "clear_history_on_exit": self.clear_history_on_exit,
+            "gpu_acceleration_enabled": self.gpu_acceleration_enabled
         })
 
     def on_dark_clicked(self, btn):
@@ -2894,6 +2943,23 @@ class BharatBrowserWindow(Gtk.Window):
         )
         perf_box.pack_start(perf_card, False, False, 0)
 
+        gpu_card = self._create_setting_card("GPU ACCELERATION")
+        gpu_detected_lbl = Gtk.Label(xalign=0.0)
+        gpu_detected_lbl.set_markup(f"<small>Detected: {GLib.markup_escape_text(self.gpu_info_label)}</small>")
+        gpu_detected_lbl.get_style_context().add_class("settings-hint-label")
+        gpu_detected_lbl.set_line_wrap(True)
+        gpu_card.pack_start(gpu_detected_lbl, False, False, 0)
+        gpu_card.pack_start(
+            self._create_toggle_row(
+                "🎮 Use GPU for Rendering",
+                "Offloads page compositing, canvas, and WebGL to the GPU instead of system RAM. Turn off only if pages render incorrectly (software fallback, uses more RAM/CPU).",
+                self.gpu_acceleration_enabled,
+                lambda act: self.on_gpu_acceleration_toggled(act)
+            ),
+            False, False, 0
+        )
+        perf_box.pack_start(gpu_card, False, False, 0)
+
         dev_card = self._create_setting_card("DEVELOPER TOOLS")
         dev_card.pack_start(
             self._create_toggle_row(
@@ -3000,6 +3066,21 @@ class BharatBrowserWindow(Gtk.Window):
         self.web_settings.set_enable_webrtc(active)
         self.web_settings.set_enable_media_stream(active)
         self.save_settings()
+
+    def on_gpu_acceleration_toggled(self, active):
+        self.gpu_acceleration_enabled = active
+        self.web_settings.set_hardware_acceleration_policy(
+            WebKit2.HardwareAccelerationPolicy.ALWAYS if active
+            else WebKit2.HardwareAccelerationPolicy.NEVER
+        )
+        self.web_settings.set_enable_webgl(active)
+        if hasattr(self.web_settings, 'set_enable_2d_canvas_acceleration'):
+            self.web_settings.set_enable_2d_canvas_acceleration(active)
+        self.save_settings()
+        self.statusbar.push(
+            self.context_id,
+            "🎮 GPU Acceleration " + ("enabled" if active else "disabled — using software rendering")
+        )
 
     def on_permission_request(self, webview, request):
         uri = webview.get_uri() or "This site"
