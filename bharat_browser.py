@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.3.0 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.3.1 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -285,13 +285,13 @@ def load_persistent_settings():
         print("Settings load note:", e)
     return {}
 
-def _write_json_private(path, data):
+def _write_json_private(path, data, indent=2):
     """Write JSON with 0600 permissions from creation, not applied after the
     fact, so browsing history/session data is never briefly world/group
     readable and isn't left exposed if a chmod step were skipped."""
     fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+        json.dump(data, f, indent=indent)
 
 def save_persistent_settings(settings):
     try:
@@ -313,7 +313,7 @@ def save_session_state(urls):
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
         temp_file = SESSION_FILE + ".tmp"
-        _write_json_private(temp_file, {"urls": urls, "timestamp": time.time()})
+        _write_json_private(temp_file, {"urls": urls, "timestamp": time.time()}, indent=None)
         os.replace(temp_file, SESSION_FILE)
     except Exception as e:
         print("Session save note:", e)
@@ -335,7 +335,7 @@ def save_url_history(entries):
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
         temp_file = HISTORY_FILE + ".tmp"
-        _write_json_private(temp_file, entries)
+        _write_json_private(temp_file, entries, indent=None)
         os.replace(temp_file, HISTORY_FILE)
     except Exception as e:
         print("History save note:", e)
@@ -619,7 +619,7 @@ class BharatBrowserWindow(Gtk.Window):
     _global_css_loaded = False
 
     def __init__(self, private=False):
-        self.current_version = "1.3.0"
+        self.current_version = "1.3.1"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -693,10 +693,17 @@ class BharatBrowserWindow(Gtk.Window):
         self.tab_suspension_enabled = saved_settings.get("tab_suspension_enabled", True)
         self.clear_history_on_exit = saved_settings.get("clear_history_on_exit", False)
         self.gpu_acceleration_enabled = saved_settings.get("gpu_acceleration_enabled", True)
-        self.gpu_info_label = detect_gpu_info()
+        # glxinfo/lspci can take ~1s+ (3s timeout each) and the result is only
+        # display text in Settings, so detect it off the GTK thread instead of
+        # blocking the first window from appearing.
+        self.gpu_info_label = _GPU_INFO_CACHE if _GPU_INFO_CACHE is not None else "Detecting..."
+        if _GPU_INFO_CACHE is None:
+            threading.Thread(target=self._detect_gpu_info_async, daemon=True).start()
 
         # URL-bar autocomplete history. Never loaded/written for private
         # windows, matching the session-state privacy guarantee.
+        self._history_save_source = None
+        self._session_save_source = None
         self.url_history = [] if self.is_private else load_url_history()
         self.bookmarks = [] if self.is_private else load_bookmarks()
 
@@ -1101,6 +1108,9 @@ class BharatBrowserWindow(Gtk.Window):
             self._memory_monitor.connect("low-memory-warning", self.on_low_memory_warning)
         except Exception as e:
             print("Memory monitor note:", e)
+
+    def _detect_gpu_info_async(self):
+        self.gpu_info_label = detect_gpu_info()
 
     def on_low_memory_warning(self, monitor, level):
         print(f"Low-memory warning (level={level}), trimming caches.")
@@ -1605,6 +1615,52 @@ class BharatBrowserWindow(Gtk.Window):
         self.create_new_tab(webview=related_webview)
         return related_webview
 
+    SAVE_DEBOUNCE_SECONDS = 5
+
+    def _schedule_history_save(self):
+        """Coalesce bursts of history changes into one disk write."""
+        if self._history_save_source is None:
+            self._history_save_source = GLib.timeout_add_seconds(self.SAVE_DEBOUNCE_SECONDS, self._run_history_save)
+
+    def _run_history_save(self):
+        self._history_save_source = None
+        if not self.is_private:
+            save_url_history(self.url_history)
+        return False
+
+    def _schedule_session_save(self):
+        if self._session_save_source is None:
+            self._session_save_source = GLib.timeout_add_seconds(self.SAVE_DEBOUNCE_SECONDS, self._run_session_save)
+
+    def _collect_session_urls(self):
+        urls = []
+        for i in range(self.notebook.get_n_pages()):
+            tb = self.notebook.get_nth_page(i)
+            if hasattr(tb, '_bharat_webview'):
+                # A suspended tab's live webview URI is "about:blank"; use the
+                # URI it was suspended at so its session-restore entry survives.
+                u = self._suspended_tab_uris.get(id(tb)) or tb._bharat_webview.get_uri()
+                if u and not u.startswith("about:"):
+                    urls.append(u)
+        return urls
+
+    def _run_session_save(self):
+        self._session_save_source = None
+        if not self.is_private:
+            urls = self._collect_session_urls()
+            if urls:
+                save_session_state(urls)
+        return False
+
+    def _flush_pending_saves(self):
+        """Write anything still waiting on a debounce timer (used on close)."""
+        if self._history_save_source is not None:
+            GLib.source_remove(self._history_save_source)
+            self._run_history_save()
+        if self._session_save_source is not None:
+            GLib.source_remove(self._session_save_source)
+            self._run_session_save()
+
     def on_window_destroy(self, window):
         for i in range(self.notebook.get_n_pages()):
             tab_box = self.notebook.get_nth_page(i)
@@ -1613,11 +1669,16 @@ class BharatBrowserWindow(Gtk.Window):
 
         if not self.is_private and getattr(self, 'clear_history_on_exit', False):
             self.url_history = []
+            if self._history_save_source is not None:
+                GLib.source_remove(self._history_save_source)
+                self._history_save_source = None
             save_url_history([])
             if hasattr(self, 'url_completion_store'):
                 self.url_completion_store.clear()
             if hasattr(self, '_page_view_start'):
                 self._page_view_start.clear()
+
+        self._flush_pending_saves()
 
         global _LIVE_WINDOW_COUNT
         _LIVE_WINDOW_COUNT -= 1
@@ -2648,11 +2709,21 @@ class BharatBrowserWindow(Gtk.Window):
             "last_visited": time.time(),
         })
         del self.url_history[HISTORY_MAX_ENTRIES:]
-        save_url_history(self.url_history)
+        self._schedule_history_save()
 
-        self.url_completion_store.clear()
-        for entry in self.url_history:
-            self.url_completion_store.append([entry.get("url", ""), entry.get("title", "")])
+        # Update the autocomplete model in place instead of clearing and
+        # re-appending every entry on each page load.
+        store = self.url_completion_store
+        it = store.get_iter_first()
+        while it is not None:
+            nxt = store.iter_next(it)
+            if store.get_value(it, 0) == url:
+                store.remove(it)
+                break
+            it = nxt
+        store.prepend([url, title or url])
+        while len(store) > HISTORY_MAX_ENTRIES:
+            store.remove(store.get_iter(len(store) - 1))
 
     def _start_page_view(self, webview, url):
         if self.is_private or not url or url.startswith("about:"):
@@ -2674,7 +2745,7 @@ class BharatBrowserWindow(Gtk.Window):
         for hist_entry in self.url_history:
             if hist_entry.get("url") == url:
                 hist_entry["total_seconds"] = hist_entry.get("total_seconds", 0.0) + elapsed
-                save_url_history(self.url_history)
+                self._schedule_history_save()
                 return
 
     @staticmethod
@@ -2840,7 +2911,7 @@ class BharatBrowserWindow(Gtk.Window):
             if entry.get("url") == uri:
                 if entry.get("title") != title:
                     entry["title"] = title
-                    save_url_history(self.url_history)
+                    self._schedule_history_save()
                     for row in self.url_completion_store:
                         if row[0] == uri:
                             row[1] = title
@@ -2882,20 +2953,7 @@ class BharatBrowserWindow(Gtk.Window):
 
             # Save session state across tabs (skipped for private windows)
             if not self.is_private:
-                urls = []
-                for i in range(self.notebook.get_n_pages()):
-                    tb = self.notebook.get_nth_page(i)
-                    if hasattr(tb, '_bharat_webview'):
-                        # A suspended tab's live webview URI is "about:blank"
-                        # (that's the whole point — its real content was
-                        # unloaded to free memory); use the URI it was
-                        # suspended at instead, or this tab's entry would
-                        # silently vanish from session restore.
-                        u = self._suspended_tab_uris.get(id(tb)) or tb._bharat_webview.get_uri()
-                        if u and not u.startswith("about:"):
-                            urls.append(u)
-                if urls:
-                    save_session_state(urls)
+                self._schedule_session_save()
 
                 self._flush_page_view(webview)
                 self.record_history_entry(uri, self._resolve_display_title(webview))
