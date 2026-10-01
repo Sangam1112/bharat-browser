@@ -7,3 +7,4 @@ Terminal=false
 Type=Application
 Categories=Network;WebBrowser;
 StartupWMClass=bharat-browser
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;

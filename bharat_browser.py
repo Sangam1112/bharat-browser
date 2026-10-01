@@ -703,6 +703,8 @@ class BharatBrowserWindow(Gtk.Window):
         # URL-bar autocomplete history. Never loaded/written for private
         # windows, matching the session-state privacy guarantee.
         self._history_save_source = None
+        self._dns_prefetched = set()
+        self._dns_typing_source = None
         self._session_save_source = None
         self.url_history = [] if self.is_private else load_url_history()
         self.bookmarks = [] if self.is_private else load_bookmarks()
@@ -826,6 +828,7 @@ class BharatBrowserWindow(Gtk.Window):
         self.url_entry.set_placeholder_text("Search Google or enter URL...")
         self.url_entry.set_icon_from_icon_name(Gtk.EntryIconPosition.PRIMARY, "channel-insecure-symbolic")
         self.url_entry.connect("activate", self.on_url_activate)
+        self.url_entry.connect("changed", self.on_url_entry_changed)
         self.url_entry.connect("icon-press", self.on_url_entry_icon_press)
         top_bar.pack_start(self.url_entry, True, True, 4)
 
@@ -1550,6 +1553,7 @@ class BharatBrowserWindow(Gtk.Window):
 
         # Signals
         webview.connect("load-changed", self.on_load_changed)
+        webview.connect("mouse-target-changed", self.on_mouse_target_changed)
         webview.connect("notify::title", self.on_webview_title_notify)
         webview.connect("resource-load-started", self.on_resource_load_started)
         webview.connect("web-process-terminated", self.on_web_process_terminated)
@@ -2673,6 +2677,59 @@ class BharatBrowserWindow(Gtk.Window):
         webview = self.get_active_webview()
         if webview:
             webview.load_uri(text)
+
+    # DNS pre-resolution: warm WebKit's resolver for a host the user is likely
+    # to visit next, shaving the lookup off the real navigation. Resolution
+    # only, no connection or request is made to the site.
+    DNS_PREFETCH_TYPING_DELAY_MS = 400
+    DNS_PREFETCH_CACHE_MAX = 256
+
+    def _prefetch_dns(self, host):
+        host = (host or "").strip().rstrip(".").lower()
+        if not host or host in self._dns_prefetched or is_local_network_host(host):
+            return
+        try:
+            ipaddress.ip_address(host.strip("[]"))
+            return
+        except ValueError:
+            pass
+        if len(self._dns_prefetched) >= self.DNS_PREFETCH_CACHE_MAX:
+            self._dns_prefetched.clear()
+        self._dns_prefetched.add(host)
+        try:
+            self.context.prefetch_dns(host)
+        except Exception as e:
+            print("DNS prefetch note:", e)
+
+    def on_mouse_target_changed(self, webview, hit_test_result, modifiers):
+        if not hit_test_result.context_is_link():
+            return
+        uri = hit_test_result.get_link_uri() or ""
+        parsed = urllib.parse.urlparse(uri)
+        if parsed.scheme in ("http", "https") and parsed.hostname:
+            self._prefetch_dns(parsed.hostname)
+
+    def on_url_entry_changed(self, entry):
+        # Private windows never resolve half-typed text: it would leak
+        # keystrokes to the DNS resolver for pages never visited.
+        if self.is_private:
+            return
+        if self._dns_typing_source is not None:
+            GLib.source_remove(self._dns_typing_source)
+        self._dns_typing_source = GLib.timeout_add(self.DNS_PREFETCH_TYPING_DELAY_MS, self._run_typing_dns_prefetch)
+
+    def _run_typing_dns_prefetch(self):
+        self._dns_typing_source = None
+        text = self.url_entry.get_text().strip()
+        if not text or " " in text or text.startswith("about:"):
+            return False
+        parsed = urllib.parse.urlparse(text if "://" in text else "//" + text)
+        host = parsed.hostname or ""
+        # Only names that already look like a full domain (a dot, and a
+        # TLD-length tail) — "git" or "github." would be wasted lookups.
+        if "." in host and len(host.rsplit(".", 1)[-1]) >= 2:
+            self._prefetch_dns(host)
+        return False
 
     def _url_completion_match(self, completion, key, tree_iter, data):
         model = completion.get_model()
