@@ -107,7 +107,7 @@ It is a native GTK3 desktop app, not a repackaged Chromium or Electron. The ad b
 Packages are on the [**Releases page**](https://github.com/Sangam1112/bharat-browser/releases/latest). Replace the version if a newer one is out.
 
 <table>
-<tr><th>Ubuntu / Debian / Mint</th><th>Fedora / RHEL</th></tr>
+<tr><th>Ubuntu / Debian / Mint</th><th>Fedora</th></tr>
 <tr valign="top"><td>
 
 ```bash
@@ -129,6 +129,8 @@ sudo dnf install ./bharat-browser-${VERSION}-1.noarch.rpm
 
 Use `apt install ./file.deb` (not `dpkg -i`) so the GTK and WebKit dependencies are resolved automatically. Then start it from your application menu, or run `bharat-browser`.
 
+> **Red Hat family (RHEL, Rocky, AlmaLinux, CentOS Stream):** the app itself runs on either WebKit2GTK 4.1 or 4.0, but the RPM and `install-fedora.sh` ask for the Fedora package name `webkit2gtk4.1`, which these systems call `webkit2gtk3`. The packages are **not tested on RHEL-family systems** and may fail to resolve dependencies there. Installing `python3-gobject gtk3 webkit2gtk3` yourself and copying the files by hand should work; RHEL-family reports and fixes are welcome via [issues](https://github.com/Sangam1112/bharat-browser/issues).
+
 ### Install from source (no root needed)
 
 This installs for your user only (`~/.local`) and gives you the self-updater:
@@ -137,7 +139,7 @@ This installs for your user only (`~/.local`) and gives you the self-updater:
 git clone https://github.com/Sangam1112/bharat-browser.git
 cd bharat-browser
 ./install-ubuntu.sh        # Ubuntu / Debian / Mint
-./install-fedora.sh        # Fedora / RHEL
+./install-fedora.sh        # Fedora
 ```
 
 Add `--system` to install for all users instead (it asks for `sudo`). If `bharat-browser` isn't found in a new terminal, add this to `~/.bashrc`:
