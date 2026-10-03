@@ -155,16 +155,42 @@ cd /tmp/bharat_fedora && ./install-fedora.sh
 <details>
 <summary><b>Windows 10/11</b> (via WSL2 + WSLg)</summary>
 
-There is no native Windows build. Bharat Browser runs inside **WSL2** and opens as its own window on the Windows desktop through **WSLg** (Windows 10 build 19044+ or Windows 11).
+There is no native Windows build. Bharat Browser runs inside **WSL2** and opens as its own window on the Windows desktop through **WSLg** (Windows 11, or Windows 10 build 19044+).
 
-1. In PowerShell: `wsl --install -d Ubuntu`, reboot if asked, then open **Ubuntu** once to create your user.
-2. Inside the Ubuntu terminal:
-   ```bash
-   git clone https://github.com/Sangam1112/bharat-browser.git
-   cd bharat-browser
-   ./install-wsl.sh
-   ```
-3. Run `bharat-browser`.
+**1. Set up WSL (PowerShell)**
+
+```powershell
+wsl --install -d Ubuntu     # skip if Ubuntu is already installed; reboot if asked
+wsl -l -v                   # Ubuntu should show VERSION 2
+```
+
+Open **Ubuntu** from the Start menu once to create your Linux username and password. If `wsl -l -v` shows VERSION 1, run `wsl --set-version Ubuntu 2`. If GUI apps don't open later, run `wsl --update` and then `wsl --shutdown`.
+
+**2. Install (Ubuntu terminal)**
+
+```bash
+git clone https://github.com/Sangam1112/bharat-browser.git
+cd bharat-browser
+./install-wsl.sh
+```
+
+The script uses `sudo apt` (it will ask for your Linux password) to install Python, GTK3, WebKit2GTK and git, then installs the browser to `~/.local/share/bharat-browser` and a launcher at `~/.local/bin/bharat-browser`.
+
+**3. Run it**
+
+```bash
+bharat-browser
+```
+
+If the command isn't found, add `export PATH="$HOME/.local/bin:$PATH"` to `~/.bashrc` and open a new terminal. Later, use **Settings → Data & Actions → Check for updates** to stay current.
+
+**Troubleshooting**
+
+- *No window appears:* check that WSLg works with `sudo apt install -y x11-apps && xeyes`. If that doesn't open either, run `wsl --update` and `wsl --shutdown` in PowerShell, then reopen Ubuntu.
+- *Blank or white window:* try `WEBKIT_DISABLE_DMABUF_RENDERER=1 bharat-browser`, a common workaround for WebKitGTK under WSLg.
+- *Saving passwords doesn't work:* the password manager needs a system keyring. Run `sudo apt install -y gnome-keyring`. Everything else works without it.
+
+> The WSL installer's logic is the same as the Ubuntu one, but it hasn't been tested on a real Windows machine yet. If you try it, please tell us how it went in [issues](https://github.com/Sangam1112/bharat-browser/issues).
 </details>
 
 ---
