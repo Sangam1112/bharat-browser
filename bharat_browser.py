@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.3.3 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.3.4 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -8,7 +8,7 @@ import os
 import json
 import shutil
 
-APP_VERSION = "1.3.3"
+APP_VERSION = "1.3.4"
 # The self-updater cannot rewrite a root-owned package install, so it keeps its updates in a per-user copy
 # that the launcher (/usr/bin/bharat-browser) prefers over the system one.
 USER_INSTALL_DIR = os.path.expanduser("~/.local/share/bharat-browser")
@@ -794,6 +794,23 @@ class BharatBrowserWindow(Gtk.Window):
         else:
             self.context = WebKit2.WebContext.get_default()
 
+        # Cookies are memory-only by default, so logins would be lost on every
+        # restart. Persist them for normal windows (private windows use the
+        # ephemeral manager above and must stay in memory), and block
+        # third-party cookies plus enable Intelligent Tracking Prevention.
+        try:
+            cookie_mgr = self.context.get_cookie_manager()
+            if not self.is_private:
+                cookie_mgr.set_persistent_storage(
+                    os.path.join(CONFIG_DIR, "cookies.sqlite"),
+                    WebKit2.CookiePersistentStorage.SQLITE
+                )
+            cookie_mgr.set_accept_policy(WebKit2.CookieAcceptPolicy.NO_THIRD_PARTY)
+            if hasattr(self.data_mgr, 'set_itp_enabled'):
+                self.data_mgr.set_itp_enabled(True)
+        except Exception as e:
+            print("Cookie policy setup note:", e)
+
         if hasattr(WebKit2, 'CacheModel') and hasattr(WebKit2.CacheModel, 'WEB_BROWSER'):
             # Low Memory Mode trades WEB_BROWSER's aggressive disk/memory
             # caching (optimized for fast repeat navigation) for
@@ -808,6 +825,8 @@ class BharatBrowserWindow(Gtk.Window):
         # WebKit Settings Optimization
         self.web_settings = WebKit2.Settings()
         self.web_settings.set_enable_developer_extras(self.dev_tools_enabled)
+        if hasattr(self.web_settings, 'set_enable_back_forward_navigation_gestures'):
+            self.web_settings.set_enable_back_forward_navigation_gestures(True)
         # WebRTC is off by default: RTCPeerConnection can leak a machine's local
         # (and behind some NATs, public) IP via ICE candidates even without any
         # getUserMedia permission grant, which defeats VPN/privacy expectations.
@@ -856,6 +875,7 @@ class BharatBrowserWindow(Gtk.Window):
 
         # Top Navigation Bar
         top_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.top_bar = top_bar
         top_bar.get_style_context().add_class("top-bar")
         top_bar.set_margin_start(10)
         top_bar.set_margin_end(10)
@@ -1659,6 +1679,8 @@ class BharatBrowserWindow(Gtk.Window):
         # window/tab (target="_blank", window.open(), middle-click, OAuth
         # popups, etc.) instead of doing anything visible.
         sig_ids.append((webview, webview.connect("create", self.on_create_webview)))
+        sig_ids.append((webview, webview.connect("enter-fullscreen", self.on_webview_enter_fullscreen)))
+        sig_ids.append((webview, webview.connect("leave-fullscreen", self.on_webview_leave_fullscreen)))
 
         # Ctrl+scroll to zoom. A Gtk.EventControllerScroll attached directly
         # to the webview (tried in a prior version, both CAPTURE and BUBBLE
@@ -1704,6 +1726,44 @@ class BharatBrowserWindow(Gtk.Window):
         if load_initial_uri:
             webview.load_uri(url or self.homepage)
         return webview
+
+    def on_webview_enter_fullscreen(self, webview):
+        # Returning False lets WebKit's default handler fullscreen the toplevel
+        # window; we only need to hide our own chrome so the video fills it.
+        self.top_bar.hide()
+        self.notebook.set_show_tabs(False)
+        self.statusbar.hide()
+        return False
+
+    def on_webview_leave_fullscreen(self, webview):
+        self.top_bar.show()
+        self._update_tabs_visibility(self.notebook)
+        self.statusbar.show()
+        return False
+
+    def print_active_page(self):
+        webview = self.get_active_webview()
+        if webview:
+            WebKit2.PrintOperation.new(webview).run_dialog(self)
+
+    def toggle_inspector(self):
+        webview = self.get_active_webview()
+        if not webview or not self.dev_tools_enabled:
+            return
+        inspector = webview.get_inspector()
+        if getattr(webview, '_bharat_inspector_open', False):
+            inspector.close()
+            return
+        webview._bharat_inspector_open = True
+        if not getattr(webview, '_bharat_inspector_hooked', False):
+            webview._bharat_inspector_hooked = True
+            inspector.connect("closed", lambda i: setattr(webview, '_bharat_inspector_open', False))
+        inspector.show()
+
+    def switch_tab(self, step):
+        n = self.notebook.get_n_pages()
+        if n > 1:
+            self.notebook.set_current_page((self.notebook.get_current_page() + step) % n)
 
     def on_create_webview(self, webview, navigation_action):
         related_webview = WebKit2.WebView.new_with_related_view(webview)
@@ -2233,9 +2293,36 @@ class BharatBrowserWindow(Gtk.Window):
     def on_key_press(self, widget, event):
         ctrl = event.state & Gdk.ModifierType.CONTROL_MASK
         shift = event.state & Gdk.ModifierType.SHIFT_MASK
+        alt = event.state & Gdk.ModifierType.MOD1_MASK
+        if event.keyval == Gdk.KEY_F12 or (ctrl and shift and event.keyval in (Gdk.KEY_i, Gdk.KEY_I)):
+            self.toggle_inspector()
+            return True
+        if event.keyval == Gdk.KEY_F5:
+            webview = self.get_active_webview()
+            if webview:
+                webview.reload()
+            return True
+        if alt and event.keyval in (Gdk.KEY_Left, Gdk.KEY_Right):
+            webview = self.get_active_webview()
+            if webview:
+                if event.keyval == Gdk.KEY_Left:
+                    webview.go_back()
+                else:
+                    webview.go_forward()
+            return True
+        if ctrl and event.keyval in (Gdk.KEY_Tab, Gdk.KEY_ISO_Left_Tab):
+            self.switch_tab(-1 if (shift or event.keyval == Gdk.KEY_ISO_Left_Tab) else 1)
+            return True
         if ctrl:
             keyval = event.keyval
-            if shift and keyval in (Gdk.KEY_n, Gdk.KEY_N):
+            if keyval in (Gdk.KEY_p, Gdk.KEY_P) and not shift:
+                self.print_active_page()
+                return True
+            elif keyval in (Gdk.KEY_l, Gdk.KEY_L):
+                self.url_entry.grab_focus()
+                self.url_entry.select_region(0, -1)
+                return True
+            elif shift and keyval in (Gdk.KEY_n, Gdk.KEY_N):
                 self.open_private_window()
                 return True
             elif shift and keyval in (Gdk.KEY_o, Gdk.KEY_O):
