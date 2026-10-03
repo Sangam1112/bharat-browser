@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.3.7 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.4.0 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -8,7 +8,7 @@ import os
 import json
 import shutil
 
-APP_VERSION = "1.3.7"
+APP_VERSION = "1.4.0"
 # The self-updater cannot rewrite a root-owned package install, so it keeps its updates in a per-user copy
 # that the launcher (/usr/bin/bharat-browser) prefers over the system one.
 USER_INSTALL_DIR = os.path.expanduser("~/.local/share/bharat-browser")
@@ -76,14 +76,20 @@ os.environ["WEBKIT_USE_SINGLE_WEB_PROCESS"] = "1" if _read_low_memory_mode_setti
 
 import ast
 import getpass
+import glob
 import hashlib
+import html as html_module
 import ipaddress
 import re
+import secrets as secrets_module
+import sqlite3
+import tempfile
 import time
 import threading
 import subprocess
 import urllib.parse
 import urllib.request
+from collections import Counter
 import gi
 import cairo
 
@@ -93,7 +99,7 @@ try:
 except ValueError:
     gi.require_version('WebKit2', '4.0')
 
-from gi.repository import Gtk, Gdk, GdkPixbuf, WebKit2, GLib, Gio, Pango
+from gi.repository import Gtk, Gdk, GdkPixbuf, GObject, WebKit2, GLib, Gio, Pango
 
 # Import high-rating open-source ad-blocking engine (adblockparser) if available
 for adblock_path in [
@@ -255,7 +261,7 @@ def is_ad_or_tracker(url_str):
         pass
     return False
 
-def build_content_blocker_rules_json():
+def build_content_blocker_rules_json(extra_domains=()):
     """Compile BLOCKED_DOMAINS into a WKContentRuleList (WebKit's native,
     network-level content blocker). This runs inside the web process itself
     instead of round-tripping every subresource through a Python callback, so
@@ -271,6 +277,14 @@ def build_content_blocker_rules_json():
         prefix = f"^https?://([a-z0-9-]+\\.)*{re.escape(domain)}"
         rules.append({"trigger": {"url-filter": prefix + "[:/]"}, "action": {"type": "block"}})
         rules.append({"trigger": {"url-filter": prefix + "$"}, "action": {"type": "block"}})
+    # Domains from the downloaded tracker list are limited to third-party loads, so
+    # visiting a listed site directly never gets blocked.
+    for domain in sorted(set(extra_domains) - set(BLOCKED_DOMAINS)):
+        # One rule per domain (WebKit always gives http(s) URLs a "/" path), which
+        # keeps the rule count, and so memory use, as low as possible.
+        rules.append({"trigger": {"url-filter": f"^https?://([a-z0-9-]+\\.)*{re.escape(domain)}[:/]",
+                                  "load-type": ["third-party"]},
+                      "action": {"type": "block"}})
     return json.dumps(rules).encode("utf-8")
 
 def sanitize_url(url_str):
@@ -438,6 +452,7 @@ ul{text-align:left;display:inline-block;color:#cbd5e1;line-height:1.8;margin:4px
 .btn{display:inline-block;margin:14px 0 4px;background:#2563eb;color:#fff;padding:11px 26px;border-radius:999px;
  text-decoration:none;font-weight:600;box-shadow:0 4px 18px #2563eb55;transition:transform .15s}
 .btn:hover{transform:translateY(-2px)}
+.btn.alt{background:transparent;border:1px solid #475569;box-shadow:none;color:#cbd5e1;margin-left:8px}
 .live{color:#4ade80;font-size:13px;margin-top:6px}
 .game{margin:26px auto 6px;border:1px solid #243049;border-radius:14px;overflow:hidden;background:#0f1626}
 canvas{display:block;width:100%;height:auto;cursor:pointer}
@@ -448,7 +463,7 @@ canvas{display:block;width:100%;height:auto;cursor:pointer}
 <div class="sig">@ICON@@PULSE@</div>
 <h1>@HEADING@</h1>
 @BODY@
-<a class="btn" href="@URI@">Try again</a>
+@ACTIONS@
 @LIVE@
 @GAME@
 <div class="tech">Technical details: @TECH@</div>
@@ -525,11 +540,23 @@ def build_error_page(host, uri, error_message, offline):
         }
     parts["TECH"] = esc(error_message)
     parts["URI"] = esc(uri).replace('"', "&quot;")
-    # SCRIPT is trusted static code, substituted last so page text can't inject into it.
-    script = parts.pop("SCRIPT")
-    for key, value in parts.items():
-        page = page.replace(f"@{key}@", value)
-    return page.replace("@SCRIPT@", script)
+    parts["ACTIONS"] = f'<a class="btn" href="{parts["URI"]}">Try again</a>'
+    return _fill_error_template(page, parts)
+
+
+def _fill_error_template(page, parts):
+    """Single-pass @KEY@ substitution: text inside a substituted value (an error
+    message that happens to contain "@HEADING@", say) is never substituted again."""
+    return re.sub(r"@([A-Z]+)@", lambda m: parts.get(m.group(1), m.group(0)), page)
+
+
+def build_notice_page(icon, heading, body_html, actions_html, tech=""):
+    """Same look as the error page, for other notices (crashes, HTTP warnings).
+    `body_html` and `actions_html` are inserted as-is, so callers must escape any
+    page-controlled text in them."""
+    return _fill_error_template(_ERROR_PAGE_TEMPLATE, {
+        "ICON": icon, "PULSE": "", "HEADING": heading, "BODY": body_html, "ACTIONS": actions_html,
+        "LIVE": "", "GAME": "", "SCRIPT": "", "URI": "", "TECH": GLib.markup_escape_text(tech)})
 
 
 # Chrome-compatible UA so sites don't serve "unsupported browser" pages or flag
@@ -608,11 +635,11 @@ def load_session_state():
         print("Session load note:", e)
     return {}
 
-def save_session_state(urls):
+def save_session_state(urls, pinned=()):
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
         temp_file = SESSION_FILE + ".tmp"
-        _write_json_private(temp_file, {"urls": urls, "timestamp": time.time()}, indent=None)
+        _write_json_private(temp_file, {"urls": urls, "pinned": list(pinned), "timestamp": time.time()}, indent=None)
         os.replace(temp_file, SESSION_FILE)
     except Exception as e:
         print("Session save note:", e)
@@ -661,6 +688,603 @@ def save_bookmarks(entries):
         os.replace(temp_file, BOOKMARKS_FILE)
     except Exception as e:
         print("Bookmarks save note:", e)
+
+# ---------------------------------------------------------------------------
+# Import bookmarks / history from other browsers
+# ---------------------------------------------------------------------------
+_CHROMIUM_FAMILY_DIRS = {
+    "Google Chrome": ("~/.config/google-chrome", "~/.var/app/com.google.Chrome/config/google-chrome"),
+    "Chromium": ("~/.config/chromium", "~/snap/chromium/common/chromium", "~/.var/app/org.chromium.Chromium/config/chromium"),
+    "Brave": ("~/.config/BraveSoftware/Brave-Browser", "~/.var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser"),
+    "Microsoft Edge": ("~/.config/microsoft-edge",),
+    "Vivaldi": ("~/.config/vivaldi",),
+    "Opera": ("~/.config/opera",),
+}
+_FIREFOX_DIRS = ("~/.mozilla/firefox", "~/snap/firefox/common/.mozilla/firefox", "~/.var/app/org.mozilla.firefox/.mozilla/firefox")
+
+
+def find_importable_profiles(home=None):
+    """Browser profiles on this machine that bookmarks/history can be read from.
+    Returns dicts {"browser", "profile", "kind" ("firefox"|"chromium"), "path"}."""
+    expand = (lambda p: p.replace("~", home, 1)) if home else os.path.expanduser
+    found = []
+    for base in _FIREFOX_DIRS:
+        for places in sorted(glob.glob(os.path.join(expand(base), "*", "places.sqlite"))):
+            profile_dir = os.path.dirname(places)
+            found.append({"browser": "Firefox", "profile": os.path.basename(profile_dir),
+                          "kind": "firefox", "path": profile_dir})
+    for name, bases in _CHROMIUM_FAMILY_DIRS.items():
+        for base in bases:
+            base = expand(base)
+            for profile_dir in sorted(glob.glob(os.path.join(base, "Default")) + glob.glob(os.path.join(base, "Profile *"))):
+                if os.path.exists(os.path.join(profile_dir, "Bookmarks")) or os.path.exists(os.path.join(profile_dir, "History")):
+                    found.append({"browser": name, "profile": os.path.basename(profile_dir),
+                                  "kind": "chromium", "path": profile_dir})
+    return found
+
+
+def _chromium_time_to_epoch(value):
+    """Chromium timestamps are microseconds since 1601-01-01."""
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return time.time()
+    return v / 1_000_000 - 11644473600 if v > 0 else time.time()
+
+
+def _is_web_url(url):
+    return isinstance(url, str) and url.startswith(("http://", "https://"))
+
+
+def _query_copied_sqlite(db_path, query, params=()):
+    """Run a read-only query on a COPY of a browser's database: the original is
+    usually locked (or mid-write) while that browser is running."""
+    with tempfile.TemporaryDirectory() as tmp:
+        dst = os.path.join(tmp, "db.sqlite")
+        shutil.copy2(db_path, dst)
+        for suffix in ("-wal", "-shm"):
+            if os.path.exists(db_path + suffix):
+                shutil.copy2(db_path + suffix, dst + suffix)
+        conn = sqlite3.connect(dst)
+        try:
+            return conn.execute(query, params).fetchall()
+        finally:
+            conn.close()
+
+
+def read_chromium_bookmarks(profile_dir):
+    path = os.path.join(profile_dir, "Bookmarks")
+    out = []
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    def walk(node):
+        if not isinstance(node, dict):
+            return
+        if node.get("type") == "url" and _is_web_url(node.get("url")):
+            out.append({"url": node["url"], "title": (node.get("name") or node["url"]).strip(),
+                        "added": _chromium_time_to_epoch(node.get("date_added"))})
+        for child in node.get("children") or []:
+            walk(child)
+
+    for root in (data.get("roots") or {}).values():
+        walk(root)
+    return out
+
+
+def read_chromium_history(profile_dir, limit=HISTORY_MAX_ENTRIES):
+    rows = _query_copied_sqlite(
+        os.path.join(profile_dir, "History"),
+        "SELECT url, title, visit_count, last_visit_time FROM urls "
+        "WHERE url LIKE 'http%' ORDER BY last_visit_time DESC LIMIT ?", (limit,))
+    return [{"url": u, "title": (t or u).strip(), "total_seconds": 0.0, "visits": max(int(c or 1), 1),
+             "last_visited": _chromium_time_to_epoch(ts)} for u, t, c, ts in rows if _is_web_url(u)]
+
+
+def read_firefox_bookmarks(profile_dir):
+    rows = _query_copied_sqlite(
+        os.path.join(profile_dir, "places.sqlite"),
+        "SELECT b.title, p.url, b.dateAdded FROM moz_bookmarks b JOIN moz_places p ON b.fk = p.id "
+        "WHERE b.type = 1 AND p.url LIKE 'http%'")
+    return [{"url": u, "title": (t or u).strip(), "added": (a / 1_000_000) if a else time.time()}
+            for t, u, a in rows if _is_web_url(u)]
+
+
+def read_firefox_history(profile_dir, limit=HISTORY_MAX_ENTRIES):
+    rows = _query_copied_sqlite(
+        os.path.join(profile_dir, "places.sqlite"),
+        "SELECT url, title, visit_count, last_visit_date FROM moz_places "
+        "WHERE url LIKE 'http%' AND visit_count > 0 AND last_visit_date IS NOT NULL "
+        "ORDER BY last_visit_date DESC LIMIT ?", (limit,))
+    return [{"url": u, "title": (t or u).strip(), "total_seconds": 0.0, "visits": max(int(c or 1), 1),
+             "last_visited": ts / 1_000_000} for u, t, c, ts in rows if _is_web_url(u)]
+
+
+def read_profile(profile, want_bookmarks=True, want_history=True):
+    """Returns (bookmarks, history, errors) for one profile; a failure in one
+    part (e.g. unreadable database) doesn't lose the other."""
+    bookmarks, history, errors = [], [], []
+    firefox = profile["kind"] == "firefox"
+    if want_bookmarks:
+        try:
+            bookmarks = (read_firefox_bookmarks if firefox else read_chromium_bookmarks)(profile["path"])
+        except Exception as e:
+            errors.append(f"bookmarks: {e}")
+    if want_history:
+        try:
+            history = (read_firefox_history if firefox else read_chromium_history)(profile["path"])
+        except Exception as e:
+            errors.append(f"history: {e}")
+    return bookmarks, history, errors
+
+
+def merge_bookmarks(existing, incoming, limit=BOOKMARKS_MAX_ENTRIES):
+    """Existing bookmarks win; returns (merged, number_added)."""
+    seen = {b.get("url") for b in existing}
+    merged, added = list(existing), 0
+    for b in incoming:
+        if b["url"] in seen or len(merged) >= limit:
+            continue
+        seen.add(b["url"])
+        merged.append(b)
+        added += 1
+    return merged, added
+
+
+def merge_history(existing, incoming, limit=HISTORY_MAX_ENTRIES):
+    """Existing entries win; result is most-recent-first and capped. Returns (merged, number_added)."""
+    existing_urls = {e.get("url") for e in existing}
+    by_url = {e["url"]: e for e in incoming}
+    by_url.update({e.get("url"): e for e in existing})
+    merged = sorted(by_url.values(), key=lambda e: e.get("last_visited", 0), reverse=True)[:limit]
+    return merged, sum(1 for e in merged if e.get("url") not in existing_urls)
+
+
+def parse_netscape_bookmarks(text):
+    """Bookmarks from the HTML export every browser can produce (Netscape format)."""
+    out = []
+    for m in re.finditer(r"<A\s([^>]*)>(.*?)</A>", text, re.I | re.S):
+        attrs, title = m.groups()
+        href = re.search(r'HREF="([^"]*)"', attrs, re.I)
+        if not href:
+            continue
+        url = html_module.unescape(href.group(1)).strip()
+        if not _is_web_url(url):
+            continue
+        added = re.search(r'ADD_DATE="(\d+)"', attrs, re.I)
+        title = html_module.unescape(re.sub(r"<[^>]+>", "", title)).strip()
+        out.append({"url": url, "title": title or url, "added": int(added.group(1)) if added else time.time()})
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Per-site settings (permissions, zoom, ad blocking, JavaScript)
+# ---------------------------------------------------------------------------
+SITE_SETTINGS_FILE = os.path.join(CONFIG_DIR, "site_settings.json")
+PERMISSION_KINDS = {"media": "Camera & microphone", "location": "Location", "notifications": "Notifications"}
+
+
+def load_site_settings():
+    try:
+        if os.path.exists(SITE_SETTINGS_FILE):
+            with open(SITE_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return {h: v for h, v in data.items() if isinstance(h, str) and isinstance(v, dict)}
+    except Exception as e:
+        print("Site settings load note:", e)
+    return {}
+
+
+def save_site_settings(settings):
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        temp_file = SITE_SETTINGS_FILE + ".tmp"
+        _write_json_private(temp_file, settings)
+        os.replace(temp_file, SITE_SETTINGS_FILE)
+    except Exception as e:
+        print("Site settings save note:", e)
+
+
+def site_host_of(uri):
+    try:
+        return (urllib.parse.urlparse(uri or "").hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def set_site_value(settings, host, key, value, sub=None):
+    """Set (or, when value is None, clear) a per-site value; drops empty entries."""
+    if not host:
+        return
+    entry = settings.setdefault(host, {})
+    if sub is None:
+        if value is None:
+            entry.pop(key, None)
+        else:
+            entry[key] = value
+    else:
+        group = entry.setdefault(key, {})
+        if value is None:
+            group.pop(sub, None)
+        else:
+            group[sub] = value
+        if not group:
+            entry.pop(key, None)
+    if not entry:
+        settings.pop(host, None)
+
+
+def get_site_permission(settings, host, kind):
+    value = (settings.get(host, {}).get("permissions") or {}).get(kind)
+    return value if value in ("allow", "deny") else None
+
+
+# ---------------------------------------------------------------------------
+# Tracker list updates (EasyPrivacy domain rules -> WebKit content blocker)
+# ---------------------------------------------------------------------------
+TRACKER_LIST_URL = "https://easylist.to/easylist/easyprivacy.txt"
+TRACKER_LIST_CACHE = os.path.join(CACHE_DIR, "tracker_list.json")
+TRACKER_LIST_MAX_AGE = 7 * 24 * 3600
+TRACKER_LIST_MAX_BYTES = 8 * 1024 * 1024
+TRACKER_LIST_MAX_DOMAINS = 50000
+# Never block these even if a list says so: blocking them breaks sign-in, captchas
+# and a huge number of sites, which is a worse outcome than a missed tracker.
+_NEVER_BLOCK_SUBTREES = {
+    "google.com", "gstatic.com", "googleapis.com", "recaptcha.net", "youtube.com", "googlevideo.com",
+    "cloudflare.com", "jsdelivr.net", "unpkg.com", "bootstrapcdn.com", "github.com", "githubusercontent.com",
+    "wikipedia.org", "wikimedia.org", "microsoft.com", "live.com", "apple.com", "amazon.com", "paypal.com",
+}
+_ABP_DOMAIN_RE = re.compile(r"^\|\|([a-z0-9][a-z0-9.-]*\.[a-z]{2,})\^(?:\$([a-z0-9,~=_|.-]+))?$")
+_ABP_SAFE_OPTIONS = {"third-party", "3p", "script", "image", "xmlhttprequest", "xhr", "ping", "subdocument",
+                     "stylesheet", "font", "media", "other", "important"}
+
+
+def parse_abp_domain_rules(text):
+    """Extract plain `||domain^` blocking rules from an Adblock-Plus-syntax list.
+    Anything fancier (paths, wildcards, exceptions, $domain=, cosmetic rules)
+    is skipped on purpose: only whole-domain tracker rules are applied."""
+    domains = set()
+    for line in text.splitlines():
+        line = line.strip().lower()
+        if not line or line[0] in "![#" or line.startswith("@@") or "##" in line or "#@#" in line:
+            continue
+        m = _ABP_DOMAIN_RE.match(line)
+        if not m:
+            continue
+        options = m.group(2)
+        if options:
+            parts = set(options.split(","))
+            if any(p.startswith(("domain=", "~")) for p in parts) or not parts <= _ABP_SAFE_OPTIONS:
+                continue
+        domain = m.group(1)
+        if _host_matches_domain_set(domain, _NEVER_BLOCK_SUBTREES):
+            continue
+        domains.add(domain)
+    return domains
+
+
+def load_tracker_list_cache():
+    """(domains, fetched_epoch) from the last successful download, or (set(), 0)."""
+    try:
+        with open(TRACKER_LIST_CACHE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        domains = {d for d in data.get("domains", []) if isinstance(d, str)}
+        return domains, float(data.get("fetched", 0))
+    except Exception:
+        return set(), 0.0
+
+
+def fetch_tracker_list(url=TRACKER_LIST_URL, timeout=20):
+    """Download + parse the tracker list and cache the result. Raises on failure."""
+    req = urllib.request.Request(url, headers={"User-Agent": "BharatBrowser-tracker-list"})
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        raw = response.read(TRACKER_LIST_MAX_BYTES + 1)
+    if len(raw) > TRACKER_LIST_MAX_BYTES:
+        raise ValueError("tracker list too large")
+    domains = parse_abp_domain_rules(raw.decode("utf-8", errors="replace"))
+    if len(domains) < 100:
+        raise ValueError(f"tracker list looks wrong ({len(domains)} domains)")
+    domains = set(sorted(domains)[:TRACKER_LIST_MAX_DOMAINS])
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    _write_json_private(TRACKER_LIST_CACHE, {"fetched": time.time(), "domains": sorted(domains)}, indent=None)
+    return domains
+
+
+# ---------------------------------------------------------------------------
+# Usage statistics for the privacy report
+# ---------------------------------------------------------------------------
+STATS_FILE = os.path.join(CONFIG_DIR, "stats.json")
+
+
+def load_privacy_stats():
+    try:
+        with open(STATS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {"since": float(data.get("since", time.time())), "blocked": int(data.get("blocked", 0)),
+                "params": int(data.get("params", 0)), "https": int(data.get("https", 0))}
+    except Exception:
+        return {"since": time.time(), "blocked": 0, "params": 0, "https": 0}
+
+
+def save_privacy_stats(stats):
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        _write_json_private(STATS_FILE, stats, indent=None)
+    except Exception as e:
+        print("Stats save note:", e)
+
+
+# ---------------------------------------------------------------------------
+# Password storage: freedesktop Secret Service (GNOME Keyring, KWallet, KeePassXC)
+# ---------------------------------------------------------------------------
+class SecretServiceClient:
+    """Minimal Secret Service client over Gio D-Bus. Passwords live only in the
+    user's system keyring, never in Bharat Browser's own files. Every method
+    returns a failure value (False/[]/None) instead of raising, and `.error`
+    explains why when no keyring is available."""
+    SERVICE = "org.freedesktop.secrets"
+    SERVICE_PATH = "/org/freedesktop/secrets"
+
+    def __init__(self, application="bharat-browser"):
+        self.application = application
+        self.error = ""
+        self._bus = None
+        self._session = None
+        self._collection = None
+
+    def _call(self, path, iface, method, params, reply_type):
+        return self._bus.call_sync(self.SERVICE, path, iface, method, params,
+                                   GLib.VariantType(reply_type) if reply_type else None,
+                                   Gio.DBusCallFlags.NONE, 10000, None)
+
+    def available(self):
+        if self._session:
+            return True
+        try:
+            self._bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+            out = self._call(self.SERVICE_PATH, "org.freedesktop.Secret.Service", "OpenSession",
+                             GLib.Variant("(sv)", ("plain", GLib.Variant("s", ""))), "(vo)").unpack()
+            collection = self._call(self.SERVICE_PATH, "org.freedesktop.Secret.Service", "ReadAlias",
+                                    GLib.Variant("(s)", ("default",)), "(o)").unpack()[0]
+            if collection == "/":
+                raise RuntimeError("no default keyring found")
+            self._session, self._collection = out[1], collection
+            return True
+        except Exception as e:
+            self.error = str(e)
+            self._session = None
+            return False
+
+    def _locked(self, path, iface):
+        value = self._call(path, "org.freedesktop.DBus.Properties", "Get",
+                           GLib.Variant("(ss)", (f"org.freedesktop.Secret.{iface}", "Locked")), "(v)").unpack()[0]
+        return bool(value)
+
+    def _run_prompt(self, prompt_path):
+        """Let the keyring show its own unlock dialog and wait for the outcome."""
+        loop, result = GLib.MainLoop(), {}
+
+        def on_completed(conn, sender, path, iface, name, params, *args):
+            result["dismissed"] = params.unpack()[0]
+            loop.quit()
+
+        sub = self._bus.signal_subscribe(self.SERVICE, "org.freedesktop.Secret.Prompt", "Completed",
+                                         prompt_path, None, Gio.DBusSignalFlags.NONE, on_completed)
+        try:
+            self._call(prompt_path, "org.freedesktop.Secret.Prompt", "Prompt", GLib.Variant("(s)", ("",)), None)
+            GLib.timeout_add_seconds(120, lambda: (loop.quit(), False)[1])
+            loop.run()
+        finally:
+            self._bus.signal_unsubscribe(sub)
+        return result.get("dismissed", True) is False
+
+    def _unlock(self, objects):
+        _, prompt = self._call(self.SERVICE_PATH, "org.freedesktop.Secret.Service", "Unlock",
+                               GLib.Variant("(ao)", (objects,)), "(aoo)").unpack()
+        return prompt == "/" or self._run_prompt(prompt)
+
+    def store(self, host, username, password):
+        """Create or replace the login for (host, username)."""
+        if not self.available():
+            return False
+        try:
+            if self._locked(self._collection, "Collection") and not self._unlock([self._collection]):
+                return False
+            attrs = {"application": self.application, "host": host, "username": username}
+            props = {"org.freedesktop.Secret.Item.Label": GLib.Variant("s", f"Bharat Browser: {username} @ {host}"),
+                     "org.freedesktop.Secret.Item.Attributes": GLib.Variant("a{ss}", attrs)}
+            secret = (self._session, b"", password.encode("utf-8"), "text/plain")
+            _, prompt = self._call(self._collection, "org.freedesktop.Secret.Collection", "CreateItem",
+                                   GLib.Variant("(a{sv}(oayays)b)", (props, secret, True)), "(oo)").unpack()
+            return prompt == "/" or self._run_prompt(prompt)
+        except Exception as e:
+            self.error = str(e)
+            return False
+
+    def find(self, host=None):
+        """Saved logins (optionally for one host) as [{"item", "host", "username"}], no passwords."""
+        if not self.available():
+            return []
+        try:
+            attrs = {"application": self.application}
+            if host:
+                attrs["host"] = host
+            unlocked, locked = self._call(self.SERVICE_PATH, "org.freedesktop.Secret.Service", "SearchItems",
+                                          GLib.Variant("(a{ss})", (attrs,)), "(aoao)").unpack()
+            if locked and self._unlock(locked):
+                unlocked = list(unlocked) + list(locked)
+            results = []
+            for item in unlocked:
+                a = self._call(item, "org.freedesktop.DBus.Properties", "Get",
+                               GLib.Variant("(ss)", ("org.freedesktop.Secret.Item", "Attributes")), "(v)").unpack()[0]
+                results.append({"item": item, "host": a.get("host", ""), "username": a.get("username", "")})
+            return sorted(results, key=lambda r: (r["host"], r["username"]))
+        except Exception as e:
+            self.error = str(e)
+            return []
+
+    def get_password(self, item):
+        try:
+            secret = self._call(item, "org.freedesktop.Secret.Item", "GetSecret",
+                                GLib.Variant("(o)", (self._session,)), "((oayays))").unpack()[0]
+            return bytes(secret[2]).decode("utf-8")
+        except Exception as e:
+            self.error = str(e)
+            return None
+
+    def delete(self, item):
+        try:
+            (prompt,) = self._call(item, "org.freedesktop.Secret.Item", "Delete", None, "(o)").unpack()
+            return prompt == "/" or self._run_prompt(prompt)
+        except Exception as e:
+            self.error = str(e)
+            return False
+
+
+# Runs in an isolated JS world (see create_new_tab) so page scripts can't see or
+# spoof it. It only *reports* what the user typed when they submit a login form;
+# nothing is ever filled in without a click on the "Fill" bar.
+PASSWORD_DETECT_JS = r"""
+(function(){
+ if (window.top !== window) return;
+ function post(m){ try { window.webkit.messageHandlers.bharatPw.postMessage(m); } catch(e){} }
+ var sent = {};
+ function visible(el){ var r = el.getBoundingClientRect(), s = getComputedStyle(el);
+   return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; }
+ function pwFields(root){ return Array.prototype.filter.call(root.querySelectorAll('input[type=password]'), visible); }
+ function userFor(pw){
+   var scope = pw.form || document, best = null;
+   scope.querySelectorAll('input:not([type]),input[type=text],input[type=email],input[type=tel]').forEach(function(el){
+     if (visible(el) && (el.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING)) best = el; });
+   return best; }
+ function capture(pw){
+   var u = userFor(pw), user = u ? u.value : '', pass = pw.value;
+   if (!pass) return;
+   var key = user + '\u0000' + pass; if (sent[key]) return; sent[key] = 1;
+   post({type: 'submit', user: user, pass: pass}); }
+ document.addEventListener('submit', function(e){
+   if (e.target && e.target.querySelectorAll) pwFields(e.target).forEach(capture); }, true);
+ document.addEventListener('click', function(e){
+   var b = e.target.closest && e.target.closest('button,input[type=submit],[role=button]'); if (!b) return;
+   pwFields(b.form || b.closest('form') || document).forEach(capture); }, true);
+ document.addEventListener('keydown', function(e){
+   if (e.key === 'Enter' && e.target && e.target.type === 'password')
+     pwFields(e.target.form || document).forEach(capture); }, true);
+ window.addEventListener('load', function(){
+   setTimeout(function(){ if (pwFields(document).length) post({type: 'form'}); }, 300); });
+})();
+"""
+
+# Run in the page's own world, only after the user clicks "Fill" (a real gesture).
+# Uses the native value setter + events so frameworks such as React notice the change.
+PASSWORD_FILL_JS = r"""
+(function(user, pass){
+ function visible(el){ var r = el.getBoundingClientRect(), s = getComputedStyle(el);
+   return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; }
+ function setv(el, v){
+   var d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+   d.set.call(el, v);
+   el.dispatchEvent(new Event('input', {bubbles: true}));
+   el.dispatchEvent(new Event('change', {bubbles: true})); }
+ var pw = Array.prototype.filter.call(document.querySelectorAll('input[type=password]'), visible)[0];
+ if (!pw) return false;
+ var scope = pw.form || document, best = null;
+ scope.querySelectorAll('input:not([type]),input[type=text],input[type=email],input[type=tel]').forEach(function(el){
+   if (visible(el) && (el.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING)) best = el; });
+ if (best && user) setv(best, user);
+ setv(pw, pass);
+ return true;
+})(%s, %s);
+"""
+
+# ---------------------------------------------------------------------------
+# Reader mode: builds a clean, readable copy of the article in a closed shadow
+# root and removes it again on the second call. Returns 'opened', 'closed' or
+# 'no-article'. Only whitelisted tags/attributes are copied, so no page script,
+# event handler or style from the original can run inside the reader.
+# ---------------------------------------------------------------------------
+READER_MODE_JS = r"""
+(function(){
+ var OID = '__bharat_reader', old = document.getElementById(OID);
+ if (old) { old.remove(); document.documentElement.style.overflow = window.__bharatPrevOverflow || ''; return 'closed'; }
+ var DROP = {SCRIPT:1,STYLE:1,NOSCRIPT:1,IFRAME:1,FORM:1,BUTTON:1,INPUT:1,SELECT:1,TEXTAREA:1,SVG:1,CANVAS:1,
+   VIDEO:1,AUDIO:1,OBJECT:1,EMBED:1,NAV:1,ASIDE:1,FOOTER:1,TEMPLATE:1,DIALOG:1};
+ var KEEP = {P:1,H1:1,H2:1,H3:1,H4:1,H5:1,H6:1,UL:1,OL:1,LI:1,BLOCKQUOTE:1,PRE:1,CODE:1,A:1,IMG:1,FIGURE:1,
+   FIGCAPTION:1,STRONG:1,B:1,EM:1,I:1,BR:1,HR:1,TABLE:1,THEAD:1,TBODY:1,TR:1,TD:1,TH:1,SUB:1,SUP:1};
+ var BAD = /(^|[\s_-])(ad|ads|advert|banner|comment|comments|cookie|footer|menu|modal|newsletter|popup|promo|related|share|sharing|sidebar|social|sponsor|subscribe|widget)([\s_-]|$)/i;
+ function tl(el){ return (el.innerText || '').trim().length; }
+ function ll(el){ var n = 0; el.querySelectorAll('a').forEach(function(a){ n += (a.innerText || '').length; }); return n; }
+ var scores = new Map();
+ document.querySelectorAll('p').forEach(function(p){
+   var t = (p.innerText || '').trim().length;
+   if (t < 40 || p.closest('nav,aside,footer,form')) return;
+   var par = p.parentElement; if (!par) return;
+   scores.set(par, (scores.get(par) || 0) + t);
+   var gp = par.parentElement; if (gp) scores.set(gp, (scores.get(gp) || 0) + t / 2); });
+ var best = null, bs = 0;
+ scores.forEach(function(s, el){
+   var len = tl(el) || 1, cls = (el.className && el.className.baseVal === undefined ? el.className : '') + ' ' + (el.id || '');
+   s *= (1 - Math.min(1, ll(el) / len));
+   if (/article|main|content|post|entry|story/i.test(cls)) s *= 1.2;
+   if (BAD.test(cls)) s *= 0.3;
+   if (s > bs) { bs = s; best = el; } });
+ if (!best || bs < 250) return 'no-article';
+ function clean(node, out){
+   node.childNodes.forEach(function(c){
+     if (c.nodeType === 3) { out.appendChild(document.createTextNode(c.nodeValue)); return; }
+     if (c.nodeType !== 1) return;
+     var tag = c.tagName.toUpperCase();
+     if (DROP[tag] || c.hidden || c.getAttribute('aria-hidden') === 'true') return;
+     var cls = (typeof c.className === 'string' ? c.className : '') + ' ' + (c.id || '');
+     if (tag !== 'P' && BAD.test(cls) && tl(c) < 600) return;
+     if (KEEP[tag]) {
+       var e = document.createElement(tag);
+       if (tag === 'A') { var h = c.href; if (/^https?:/i.test(h)) { e.href = h; e.rel = 'noopener noreferrer'; } }
+       if (tag === 'IMG') { var src = c.currentSrc || c.src; if (!/^https?:|^data:image\//i.test(src || '')) return; e.src = src; e.alt = c.alt || ''; }
+       clean(c, e); out.appendChild(e);
+     } else clean(c, out); }); }
+ var body = document.createElement('div'); clean(best, body);
+ var h1 = best.querySelector('h1') || document.querySelector('h1');
+ var title = (h1 && h1.innerText.trim()) || document.title || '';
+ var dup = body.querySelector('h1');   // the page's own headline is shown once, as our title
+ if (dup && dup.textContent.trim() === title) dup.remove();
+ var by = document.querySelector('meta[name=author]');
+ var host = document.createElement('div'); host.id = OID;
+ host.style.cssText = 'position:fixed;inset:0;z-index:2147483647;';
+ var root = host.attachShadow({mode: 'closed'});
+ var themes = [['#fbfbf8', '#222', '#0b57d0'], ['#f4ecd8', '#3b3226', '#8a4b08'], ['#14171c', '#d8dde6', '#8ab4f8']];
+ var ti = 0, fs = 19;
+ var st = document.createElement('style');
+ st.textContent = '.wrap{position:absolute;inset:0;overflow:auto;font-family:Georgia,"Noto Serif",serif;line-height:1.7}' +
+  '.bar{position:sticky;top:0;display:flex;gap:8px;justify-content:flex-end;padding:10px 16px;font:14px system-ui,sans-serif}' +
+  '.bar button{border:1px solid currentColor;background:transparent;color:inherit;border-radius:999px;padding:4px 12px;cursor:pointer;opacity:.75}' +
+  '.bar button:hover{opacity:1}.col{max-width:680px;margin:0 auto;padding:10px 22px 80px}' +
+  'h1.t{font-size:1.9em;line-height:1.25;margin:.4em 0 .2em}.by{font:14px system-ui,sans-serif;opacity:.7;margin-bottom:1.5em}' +
+  'img{max-width:100%;height:auto}pre{overflow:auto;padding:12px;background:rgba(127,127,127,.15)}' +
+  'blockquote{border-left:3px solid currentColor;margin-left:0;padding-left:16px;opacity:.85}table{border-collapse:collapse}td,th{border:1px solid rgba(127,127,127,.4);padding:4px 8px}';
+ var wrap = document.createElement('div'); wrap.className = 'wrap';
+ var bar = document.createElement('div'); bar.className = 'bar';
+ function btn(label, fn){ var b = document.createElement('button'); b.textContent = label; b.onclick = fn; bar.appendChild(b); }
+ function apply(){ var t = themes[ti]; wrap.style.background = t[0]; wrap.style.color = t[1]; wrap.style.fontSize = fs + 'px';
+   col.querySelectorAll('a').forEach(function(a){ a.style.color = t[2]; }); }
+ btn('A−', function(){ fs = Math.max(13, fs - 2); apply(); });
+ btn('A+', function(){ fs = Math.min(32, fs + 2); apply(); });
+ btn('Theme', function(){ ti = (ti + 1) % themes.length; apply(); });
+ function close(){ host.remove(); document.documentElement.style.overflow = window.__bharatPrevOverflow || ''; }
+ btn('✕ Close', close);
+ var col = document.createElement('div'); col.className = 'col';
+ var t = document.createElement('h1'); t.className = 't'; t.textContent = title; col.appendChild(t);
+ if (by && by.content) { var b2 = document.createElement('div'); b2.className = 'by'; b2.textContent = by.content; col.appendChild(b2); }
+ col.appendChild(body);
+ wrap.appendChild(bar); wrap.appendChild(col); root.appendChild(st); root.appendChild(wrap);
+ window.__bharatPrevOverflow = document.documentElement.style.overflow;
+ document.documentElement.style.overflow = 'hidden';
+ document.addEventListener('keydown', function esc(e){ if (e.key === 'Escape' && document.getElementById(OID)) { close(); document.removeEventListener('keydown', esc, true); } }, true);
+ document.documentElement.appendChild(host); apply();
+ return 'opened';
+})();
+"""
 
 _GPU_INFO_CACHE = None
 
@@ -997,6 +1621,23 @@ class BharatBrowserWindow(Gtk.Window):
         self.tab_suspension_enabled = saved_settings.get("tab_suspension_enabled", True)
         self.clear_history_on_exit = saved_settings.get("clear_history_on_exit", False)
         self.gpu_acceleration_enabled = saved_settings.get("gpu_acceleration_enabled", True)
+        self.spellcheck_enabled = saved_settings.get("spellcheck_enabled", True)
+        self.tracker_lists_enabled = saved_settings.get("tracker_lists_enabled", True)
+        self.passwords_enabled = saved_settings.get("passwords_enabled", True)
+        # Per-site choices (permissions, zoom, ad blocking, JS) and privacy stats are
+        # only persisted for normal windows; private windows keep them in memory.
+        self.site_settings = {} if private else load_site_settings()
+        self.stats = {"since": time.time(), "blocked": 0, "params": 0, "https": 0} if private else load_privacy_stats()
+        self.session_stats = {"blocked": 0, "params": 0, "https": 0}
+        self.blocked_domains = Counter()
+        self.blocked_sites = Counter()
+        self._closed_tabs = []
+        self._http_allowed_hosts = set()
+        self._http_tokens = {}
+        self._recent_https_upgrades = {}
+        self._fill_offered = set()
+        self._infobar = None
+        self.secrets = SecretServiceClient()
         # glxinfo/lspci can take ~1s+ (3s timeout each) and the result is only
         # display text in Settings, so detect it off the GTK thread instead of
         # blocking the first window from appearing.
@@ -1049,6 +1690,15 @@ class BharatBrowserWindow(Gtk.Window):
                 self.data_mgr.set_itp_enabled(True)
         except Exception as e:
             print("Cookie policy setup note:", e)
+
+        try:
+            self.context.set_spell_checking_enabled(self.spellcheck_enabled)
+            languages = [lang for lang in GLib.get_language_names() if "." not in lang and lang != "C"][:2]
+            if languages:
+                self.context.set_spell_checking_languages(languages)
+            self.context.register_uri_scheme("bharat", self._on_bharat_scheme, None)
+        except Exception as e:
+            print("Spell-check / bharat:// setup note:", e)
 
         if hasattr(WebKit2, 'CacheModel') and hasattr(WebKit2.CacheModel, 'WEB_BROWSER'):
             # Low Memory Mode trades WEB_BROWSER's aggressive disk/memory
@@ -1121,6 +1771,8 @@ class BharatBrowserWindow(Gtk.Window):
         top_bar.set_margin_top(3)
         top_bar.set_margin_bottom(3)
         main_vbox.pack_start(top_bar, False, False, 0)
+        self.infobar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        main_vbox.pack_start(self.infobar_box, False, False, 0)
 
         # Nav Buttons (grouped as a segmented control)
         nav_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -1225,13 +1877,14 @@ class BharatBrowserWindow(Gtk.Window):
 
         self.btn_shield = Gtk.Button(label="🛡  0")
         self.btn_shield.get_style_context().add_class("btn-shield")
-        self.btn_shield.set_tooltip_text("2-Stage Ad & Anti-Fingerprint Shield Active")
+        self.btn_shield.set_tooltip_text("Shield active — click for your Privacy Report")
+        self.btn_shield.connect("clicked", lambda b: self.open_privacy_report())
         top_bar.pack_start(self.btn_shield, False, False, 0)
 
         self.btn_settings = Gtk.Button.new_from_icon_name("open-menu-symbolic", Gtk.IconSize.BUTTON)
         self.btn_settings.get_style_context().add_class("flat-icon-btn")
-        self.btn_settings.set_tooltip_text("Menu & Settings ☰")
-        self.btn_settings.connect("clicked", self.on_settings_clicked)
+        self.btn_settings.set_tooltip_text("Menu")
+        self.btn_settings.connect("clicked", self.show_main_menu)
         top_bar.pack_start(self.btn_settings, False, False, 0)
 
         self.content_filter = None
@@ -1272,6 +1925,13 @@ class BharatBrowserWindow(Gtk.Window):
             None, None
         )
 
+        # Login-form detection runs in an isolated JS world so pages can't see or spoof it.
+        self.password_script = None
+        if not self.is_private and hasattr(WebKit2.UserScript, "new_for_world"):
+            self.password_script = WebKit2.UserScript.new_for_world(
+                PASSWORD_DETECT_JS, WebKit2.UserContentInjectedFrames.TOP_FRAME,
+                WebKit2.UserScriptInjectionTime.END, "bharat-pw", None, None)
+
         # Gtk.Notebook for Multi-Tab Architecture
         self.notebook = Gtk.Notebook()
         self.notebook.set_scrollable(True)
@@ -1287,7 +1947,7 @@ class BharatBrowserWindow(Gtk.Window):
         # Status Bar Footer
         self.statusbar = Gtk.Statusbar()
         self.context_id = self.statusbar.get_context_id("status")
-        self.push_notification_status(f"Bharat Browser v{self.current_version} Ready | Made in INDIA 🇮🇳")
+        self.push_notification_status(f"Bharat Browser v{self.current_version} Ready | Made in INDIA")
         main_vbox.pack_start(self.statusbar, False, False, 0)
 
         # Update Dialog Box Overlay
@@ -1396,12 +2056,14 @@ class BharatBrowserWindow(Gtk.Window):
 
         # Restore Session or Open Initial Tab (private windows never read or
         # write session.json, so no private URL ever touches disk)
+        restored_pins = []
         if self.is_private:
             initial_urls = [self.homepage]
         elif self.open_homepage_on_startup:
             initial_urls = [self.homepage]
         else:
             saved_session = load_session_state()
+            restored_pins = [i for i in saved_session.get("pinned", []) if isinstance(i, int)]
             initial_urls = saved_session.get("urls", [])
             if isinstance(initial_urls, str):
                 initial_urls = [initial_urls]
@@ -1410,6 +2072,13 @@ class BharatBrowserWindow(Gtk.Window):
 
         for url in initial_urls:
             self.create_new_tab(url)
+        for index in restored_pins:
+            if 0 <= index < self.notebook.get_n_pages():
+                self.set_tab_pinned(self.notebook.get_nth_page(index), True)
+
+        # Refresh the downloaded tracker list in the background if it's stale.
+        if not self.is_private:
+            GLib.timeout_add_seconds(20, self._maybe_refresh_tracker_list)
 
         # Keybindings (Ctrl+T, Ctrl+W, Ctrl+R)
         self.connect("key-press-event", self.on_key_press)
@@ -1470,29 +2139,81 @@ class BharatBrowserWindow(Gtk.Window):
         except Exception as e:
             print("Cache trim note:", e)
 
+    BASE_FILTER_ID = "bharat-adblock-v2"
+
     def _compile_content_blocker_filter(self):
+        """Install the native content blocker. Compiled filters persist in WebKit's
+        store, so a launch normally just loads one (instant); compiling the large
+        downloaded tracker list takes ~10s and only happens when the list changes.
+        The small built-in rules go in first so the browser is never unprotected
+        while the big list compiles."""
         try:
             store_dir = os.path.join(CACHE_DIR, "content-filters")
             os.makedirs(store_dir, exist_ok=True)
             store = WebKit2.UserContentFilterStore.new(store_dir)
-            rules_bytes = build_content_blocker_rules_json()
-            store.save("bharat-adblock-v1", GLib.Bytes.new(rules_bytes), None, self._on_content_filter_saved, None)
+            extra, fetched = load_tracker_list_cache() if self.tracker_lists_enabled else (set(), 0.0)
+            full_id = self.BASE_FILTER_ID + (f"-{int(fetched)}-{len(extra)}" if extra else "")
+            keep = {self.BASE_FILTER_ID, full_id}
+            if self.content_filter is None:
+                self._load_or_compile_filter(store, self.BASE_FILTER_ID, set(), keep)
+            if extra:
+                self._load_or_compile_filter(store, full_id, extra, keep)
         except Exception as e:
             print("Content filter compile note:", e)
 
-    def _on_content_filter_saved(self, store, result, user_data):
+    def _load_or_compile_filter(self, store, identifier, extra, keep):
+        store.load(identifier, None, self._on_content_filter_loaded, (store, identifier, extra, keep))
+
+    def _on_content_filter_loaded(self, store, result, data):
+        _, identifier, extra, keep = data
         try:
-            content_filter = store.save_finish(result)
+            self._install_content_filter(store, store.load_finish(result), len(extra), keep)
+        except Exception:
+            # Not compiled yet (first run, or the tracker list changed): compile in the background.
+            try:
+                rules = build_content_blocker_rules_json(extra)
+                store.save(identifier, GLib.Bytes.new(rules), None, self._on_content_filter_saved,
+                           (len(extra), keep))
+            except Exception as e:
+                print("Content filter compile note:", e)
+
+    def _on_content_filter_saved(self, store, result, data):
+        rank, keep = data
+        try:
+            self._install_content_filter(store, store.save_finish(result), rank, keep)
         except Exception as e:
             print("Content filter save note:", e)
-            return
+
+    def _install_content_filter(self, store, content_filter, rank, keep):
+        if rank < getattr(self, "_content_filter_rank", -1):
+            return  # a fuller filter is already active; don't replace it with a smaller one
+        self._content_filter_rank = rank
+        previous = self.content_filter
         self.content_filter = content_filter
-        # Apply retroactively to any tabs opened before compilation finished
+        # Swap the new filter into every open tab (and cover tabs opened before
+        # compilation finished), honouring each tab's per-site ad-block choice.
         for i in range(self.notebook.get_n_pages()):
             tb = self.notebook.get_nth_page(i)
             if hasattr(tb, '_bharat_webview'):
-                tb._bharat_webview.get_user_content_manager().add_filter(content_filter)
-        print("Native ad/tracker content-blocker compiled and active.")
+                wv = tb._bharat_webview
+                ucm = wv.get_user_content_manager()
+                if previous is not None and getattr(wv, "_bharat_filter_on", False):
+                    ucm.remove_filter(previous)
+                wants = self._site_wants_filter(site_host_of(wv.get_uri()))
+                if wants:
+                    ucm.add_filter(content_filter)
+                wv._bharat_filter_on = wants
+        print(f"Native ad/tracker content-blocker active ({rank:,} downloaded tracker domains).")
+        # Drop compiled filters left behind by earlier tracker-list versions.
+        store.fetch_identifiers(None, self._prune_content_filters, keep)
+
+    def _prune_content_filters(self, store, result, keep):
+        try:
+            for ident in store.fetch_identifiers_finish(result) or []:
+                if ident not in keep and ident.startswith("bharat-adblock-"):
+                    store.remove(ident, None, lambda s, r, d: None, None)
+        except Exception as e:
+            print("Content filter prune note:", e)
 
     def apply_custom_css(self):
         # Screen-wide CSS is process-global and identical for every window,
@@ -1878,7 +2599,7 @@ class BharatBrowserWindow(Gtk.Window):
             min-height: 36px;
             font-size: 17px;
         }
-        .bharat-dialog switch {
+        .bharat-dialog switch, popover.bharat-menu switch {
             background-color: rgba(255, 255, 255, 0.12);
             border: 1px solid rgba(255, 255, 255, 0.2);
             border-radius: 999px;
@@ -1886,12 +2607,12 @@ class BharatBrowserWindow(Gtk.Window):
             min-height: 24px;
             color: transparent;
         }
-        .bharat-dialog switch:checked {
+        .bharat-dialog switch:checked, popover.bharat-menu switch:checked {
             background-image: linear-gradient(135deg, #6366f1, #8b5cf6);
             border-color: #818cf8;
             box-shadow: 0 0 10px rgba(99, 102, 241, 0.45);
         }
-        .bharat-dialog switch slider {
+        .bharat-dialog switch slider, popover.bharat-menu switch slider {
             background-color: #f8fafc;
             background-image: none;
             border: none;
@@ -1935,6 +2656,19 @@ class BharatBrowserWindow(Gtk.Window):
         }
         .bharat-dialog .settings-action-btn { border-radius: 10px; }
         .bharat-dialog separator { background-color: rgba(255, 255, 255, 0.06); min-height: 1px; }
+        popover.bharat-menu, popover.bharat-menu > * {
+            background-color: #151a24;
+            color: #f1f5f9;
+            border-radius: 12px;
+        }
+        popover.bharat-menu label { color: #f1f5f9; }
+        popover.bharat-menu modelbutton { color: #f1f5f9; padding: 6px 12px; border-radius: 8px; }
+        popover.bharat-menu modelbutton:hover { background-color: rgba(99, 102, 241, 0.25); }
+        .bharat-infobar {
+            background-image: linear-gradient(135deg, #1e1b4b, #172554);
+            border-bottom: 1px solid rgba(165, 180, 252, 0.35);
+        }
+        .bharat-infobar label { color: #e2e8f0; }
         """
         css_provider.load_from_data(css_data)
         Gtk.StyleContext.add_provider_for_screen(
@@ -1972,6 +2706,7 @@ class BharatBrowserWindow(Gtk.Window):
 
         if self.content_filter is not None:
             ucm.add_filter(self.content_filter)
+        webview._bharat_filter_on = self.content_filter is not None
 
         # 1. Media Codec Polyfill, 1b. Anti-Fingerprinting Farbling Engine,
         # 2. Smart Link Prefetching — shared, pre-built instances (see __init__)
@@ -2018,6 +2753,7 @@ class BharatBrowserWindow(Gtk.Window):
         sig_ids.append((find_controller, find_controller.connect("found-text", self.on_find_found_text, webview)))
         sig_ids.append((find_controller, find_controller.connect("failed-to-find-text", self.on_find_failed_text, webview)))
         webview._bharat_sig_ids = sig_ids
+        self._setup_password_detection(webview)
 
         tab_box.pack_start(webview, True, True, 0)
         tab_box.show_all()
@@ -2025,6 +2761,9 @@ class BharatBrowserWindow(Gtk.Window):
         # Custom Tab Header Widget (Label + Close Button)
         header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         tab_label = Gtk.Label(label="New Tab")
+        # width_chars gives each tab a real minimum width; without it GTK squeezes
+        # an ellipsized label down to "…" in a scrollable notebook.
+        tab_label.set_width_chars(12)
         tab_label.set_max_width_chars(18)
         tab_label.set_ellipsize(3) # PANGO_ELLIPSIZE_END
         
@@ -2037,10 +2776,19 @@ class BharatBrowserWindow(Gtk.Window):
         header_box.pack_start(close_btn, False, False, 0)
         header_box.show_all()
 
+        # EventBox so right-click (menu) and middle-click (close) work on the tab header.
+        header_event = Gtk.EventBox()
+        header_event.set_visible_window(False)
+        header_event.add(header_box)
+        header_event.connect("button-press-event", lambda w, e: self._on_tab_header_click(tab_box, e))
+        header_event.show()
+
         tab_box._bharat_webview = webview
         tab_box._bharat_label = tab_label
+        tab_box._bharat_close_btn = close_btn
+        tab_box._bharat_pinned = False
 
-        page_num = self.notebook.append_page(tab_box, header_box)
+        page_num = self.notebook.append_page(tab_box, header_event)
         self.notebook.set_tab_reorderable(tab_box, True)
         self.notebook.set_current_page(page_num)
 
@@ -2108,8 +2856,9 @@ class BharatBrowserWindow(Gtk.Window):
         if self._session_save_source is None:
             self._session_save_source = GLib.timeout_add_seconds(self.SAVE_DEBOUNCE_SECONDS, self._run_session_save)
 
-    def _collect_session_urls(self):
-        urls = []
+    def _collect_session(self):
+        """(urls, indexes of pinned tabs within urls)."""
+        urls, pinned = [], []
         for i in range(self.notebook.get_n_pages()):
             tb = self.notebook.get_nth_page(i)
             if hasattr(tb, '_bharat_webview'):
@@ -2117,15 +2866,21 @@ class BharatBrowserWindow(Gtk.Window):
                 # URI it was suspended at so its session-restore entry survives.
                 u = self._suspended_tab_uris.get(id(tb)) or tb._bharat_webview.get_uri()
                 if u and not u.startswith("about:"):
+                    if getattr(tb, "_bharat_pinned", False):
+                        pinned.append(len(urls))
                     urls.append(u)
-        return urls
+        return urls, pinned
+
+    def _collect_session_urls(self):
+        return self._collect_session()[0]
 
     def _run_session_save(self):
         self._session_save_source = None
         if not self.is_private:
-            urls = self._collect_session_urls()
+            urls, pinned = self._collect_session()
             if urls:
-                save_session_state(urls)
+                save_session_state(urls, pinned)
+            save_privacy_stats(self.stats)
         return False
 
     def _flush_pending_saves(self):
@@ -2155,6 +2910,8 @@ class BharatBrowserWindow(Gtk.Window):
                 self._page_view_start.clear()
 
         self._flush_pending_saves()
+        if not self.is_private:
+            save_privacy_stats(self.stats)
 
         global _LIVE_WINDOW_COUNT
         _LIVE_WINDOW_COUNT -= 1
@@ -2163,6 +2920,11 @@ class BharatBrowserWindow(Gtk.Window):
 
     def close_tab(self, tab_box):
         webview = getattr(tab_box, '_bharat_webview', None)
+        if webview is not None and not self.is_private:
+            closed_uri = self._suspended_tab_uris.get(id(tab_box)) or webview.get_uri() or ""
+            if closed_uri and not closed_uri.startswith("about:"):
+                self._closed_tabs.append({"url": closed_uri})
+                del self._closed_tabs[:-20]
         if webview is not None:
             self._crash_counts.pop(id(webview), None)
             self._load_failure_counts.pop(id(webview), None)
@@ -2344,6 +3106,8 @@ class BharatBrowserWindow(Gtk.Window):
     def on_url_entry_icon_press(self, entry, icon_pos, event):
         if icon_pos == Gtk.EntryIconPosition.SECONDARY:
             self.toggle_bookmark_current()
+        elif icon_pos == Gtk.EntryIconPosition.PRIMARY:
+            self.show_site_popover()
 
     def toggle_bookmark_current(self):
         if self.is_private:
@@ -2503,25 +3267,38 @@ class BharatBrowserWindow(Gtk.Window):
     MAX_AUTO_RELOAD_CRASHES = 3
 
     def on_web_process_terminated(self, webview, reason):
+        if reason == WebKit2.WebProcessTerminationReason.TERMINATED_BY_API:
+            return  # we asked for it (tab closed / suspended): not a crash
         key = id(webview)
         count = self._crash_counts.get(key, 0) + 1
         self._crash_counts[key] = count
         print(f"Web process terminated (reason={reason}), crash #{count} for this tab")
+        uri = webview.get_uri() or self.homepage
+        safe_uri = html_module.escape(uri, quote=True)
+        reload_btn = f'<a class="btn" href="{safe_uri}">Reload this page</a>'
+
+        if reason == WebKit2.WebProcessTerminationReason.EXCEEDED_MEMORY:
+            # Reloading straight away would just run out of memory again.
+            self.statusbar.push(self.context_id, "⚠️ This tab ran out of memory")
+            page = build_notice_page(
+                "🧠", "This tab ran out of memory",
+                "<p>The page used more memory than Bharat Browser allows, so it was stopped to keep the rest of your "
+                "browser (and computer) running.</p><ul><li>Close tabs you aren't using</li>"
+                "<li>Turn on <b>Low Memory Mode</b> in Settings → Performance</li></ul>",
+                reload_btn, f"web process terminated: {reason.value_nick}")
+            GLib.idle_add(lambda: webview.load_html(page, None))
+            return
 
         if count > self.MAX_AUTO_RELOAD_CRASHES:
             self.statusbar.push(self.context_id, "⚠️ This tab crashed repeatedly and was not reloaded automatically.")
-            error_html = (
-                "<html><body style='background:#0b0e14;color:#f8fafc;"
-                "font-family:sans-serif;padding:40px;'>"
-                "<h2>This page keeps crashing</h2>"
-                "<p>Bharat Browser stopped auto-reloading it after repeated crashes. "
-                "Use the Reload button to try again manually.</p>"
-                "</body></html>"
-            )
-            GLib.idle_add(lambda: webview.load_html(error_html, None))
+            page = build_notice_page(
+                "💥", "This page keeps crashing",
+                "<p>Bharat Browser stopped reloading it automatically after repeated crashes.</p>"
+                "<p>Try again later, or open the site in a private window to rule out stored site data.</p>",
+                reload_btn, f"web process terminated: {reason.value_nick}")
+            GLib.idle_add(lambda: webview.load_html(page, None))
             return
 
-        uri = webview.get_uri() or self.homepage
         GLib.idle_add(lambda: webview.load_uri(uri))
         self.statusbar.push(self.context_id, "⚠️ Web process recovered automatically.")
 
@@ -2588,6 +3365,15 @@ class BharatBrowserWindow(Gtk.Window):
         self._load_failure_counts[key] = count
         print(f"Load failed for {failing_uri} (attempt {count}): {error.message}")
 
+        # We upgraded this http:// address to https:// and the site didn't answer:
+        # say so and let the user choose, instead of a generic error.
+        failing_host = site_host_of(failing_uri)
+        if (self.https_enabled and failing_uri.startswith("https://") and failing_host
+                and self._recently_upgraded_to_https(failing_host) and not looks_offline(error.message)):
+            self._load_failure_counts.pop(key, None)
+            self._show_https_warning(webview, failing_uri, error.message)
+            return True
+
         if count <= self.MAX_AUTO_RETRY_LOAD_FAILURES:
             # Many of these (e.g. "Connection reset by peer" mid-TLS-handshake)
             # are transient and succeed on a plain retry, so retry once
@@ -2608,6 +3394,12 @@ class BharatBrowserWindow(Gtk.Window):
         ctrl = event.state & Gdk.ModifierType.CONTROL_MASK
         shift = event.state & Gdk.ModifierType.SHIFT_MASK
         alt = event.state & Gdk.ModifierType.MOD1_MASK
+        if ctrl and shift and event.keyval in (Gdk.KEY_t, Gdk.KEY_T):
+            self.reopen_closed_tab()
+            return True
+        if ctrl and alt and event.keyval in (Gdk.KEY_r, Gdk.KEY_R):
+            self.toggle_reader_mode()
+            return True
         if event.keyval == Gdk.KEY_F12 or (ctrl and shift and event.keyval in (Gdk.KEY_i, Gdk.KEY_I)):
             self.toggle_inspector()
             return True
@@ -2691,6 +3483,7 @@ class BharatBrowserWindow(Gtk.Window):
         new_level = max(self.ZOOM_MIN, min(self.ZOOM_MAX, new_level))
         webview.set_zoom_level(new_level)
         self.show_zoom_indicator(new_level)
+        self._remember_zoom(webview)
 
     def show_zoom_indicator(self, zoom_level):
         """Floating badge with the current zoom %, shown on every zoom change
@@ -3183,19 +3976,25 @@ class BharatBrowserWindow(Gtk.Window):
 
         if self.https_enabled and uri.startswith("http://"):
             host = (urllib.parse.urlparse(uri).hostname or '').lower()
-            if not is_local_network_host(host):
+            if not is_local_network_host(host) and host not in self._http_allowed_hosts:
                 new_uri = uri.replace("http://", "https://", 1)
                 request.set_uri(new_uri)
                 uri = new_uri
+                if len(self._recent_https_upgrades) > 200:
+                    self._recent_https_upgrades.clear()
+                self._recent_https_upgrades[host] = time.monotonic()
+                self._count_event("https")
 
         if self.clearurls_enabled:
             sanitized = sanitize_url(uri)
             if sanitized != uri:
                 request.set_uri(sanitized)
                 uri = sanitized
+                self._count_event("params")
 
-        if self.adblock_enabled and is_ad_or_tracker(uri):
+        if self._site_wants_filter(site_host_of(webview.get_uri())) and is_ad_or_tracker(uri):
             self.blocked_count += 1
+            self._count_blocked(webview, uri)
             if not getattr(self, '_shield_badge_update_scheduled', False):
                 self._shield_badge_update_scheduled = True
                 GLib.timeout_add(250, self._flush_shield_badge_update)
@@ -3503,7 +4302,8 @@ class BharatBrowserWindow(Gtk.Window):
                     if id(tab_box) in self._suspended_tab_titles:
                         tab_box._bharat_label.set_text("💤 " + self._suspended_tab_titles[id(tab_box)])
                     else:
-                        tab_box._bharat_label.set_text(title)
+                        pin = "📌 " if getattr(tab_box, "_bharat_pinned", False) else ""
+                        tab_box._bharat_label.set_text(pin + title)
                 break
         if self.get_active_webview() == webview:
             self.set_title(f"{title} - Bharat Browser v{self.current_version}")
@@ -3536,6 +4336,15 @@ class BharatBrowserWindow(Gtk.Window):
         self._apply_display_title(webview)
 
     def on_load_changed(self, webview, load_event):
+        if load_event in (WebKit2.LoadEvent.STARTED, WebKit2.LoadEvent.REDIRECTED):
+            # Per-site ad blocking / JavaScript must match the page about to load.
+            host = site_host_of(webview.get_uri())
+            if host:
+                self._apply_site_policy(webview, host)
+        if load_event == WebKit2.LoadEvent.STARTED:
+            self._fill_offered = {k for k in self._fill_offered if k[0] != id(webview)}
+        elif load_event == WebKit2.LoadEvent.COMMITTED:
+            self._apply_saved_zoom(webview)
         if load_event == WebKit2.LoadEvent.STARTED:
             self.statusbar.push(self.context_id, "Loading webpage...")
         elif load_event == WebKit2.LoadEvent.FINISHED:
@@ -3593,7 +4402,10 @@ class BharatBrowserWindow(Gtk.Window):
             "tab_suspension_enabled": self.tab_suspension_enabled,
             "clear_history_on_exit": self.clear_history_on_exit,
             "gpu_acceleration_enabled": self.gpu_acceleration_enabled,
-            "download_dir": self.download_dir
+            "download_dir": self.download_dir,
+            "spellcheck_enabled": self.spellcheck_enabled,
+            "tracker_lists_enabled": self.tracker_lists_enabled,
+            "passwords_enabled": self.passwords_enabled
         })
 
     def on_dark_clicked(self, btn):
@@ -3903,6 +4715,19 @@ class BharatBrowserWindow(Gtk.Window):
             False, False, 0
         )
         gen_box.pack_start(home_card, False, False, 0)
+
+        typing_card = self._create_setting_card("TYPING & READING")
+        typing_card.pack_start(
+            self._create_toggle_row(
+                "✍️ Check spelling while typing",
+                "Underlines misspelled words in text boxes, using the dictionaries installed on your system.",
+                self.spellcheck_enabled,
+                self.on_spellcheck_toggled
+            ),
+            False, False, 0
+        )
+        typing_card.pack_start(self._hint("Tip: press Ctrl+Alt+R on an article for a clean, distraction-free Reader mode."), False, False, 0)
+        gen_box.pack_start(typing_card, False, False, 0)
         stack.add_titled(gen_scroller, "general", "🌐 General")
 
         # --- Tab 2: Privacy & Security ------------------------------------
@@ -3967,6 +4792,60 @@ class BharatBrowserWindow(Gtk.Window):
             False, False, 0
         )
         priv_box.pack_start(hist_card, False, False, 0)
+
+        tracker_card = self._create_setting_card("TRACKER LISTS")
+        tracker_card.pack_start(
+            self._create_toggle_row(
+                "🛰️ Keep tracker lists up to date",
+                "Downloads the EasyPrivacy list from easylist.to about once a week and blocks those third-party trackers. "
+                "Only whole-domain rules are used, and sign-in/captcha services are never blocked.",
+                self.tracker_lists_enabled,
+                self.on_tracker_lists_toggled
+            ),
+            False, False, 0
+        )
+        tracker_status = Gtk.Label(xalign=0.0)
+        tracker_status.set_text(self._tracker_status_text())
+        tracker_status.get_style_context().add_class("settings-hint-label")
+        tracker_card.pack_start(tracker_status, False, False, 0)
+        btn_tracker_update = Gtk.Button(label="🔄 Update tracker list now")
+        btn_tracker_update.get_style_context().add_class("settings-action-btn")
+
+        def _tracker_update_clicked(_btn):
+            btn_tracker_update.set_sensitive(False)
+            tracker_status.set_text("Downloading…")
+
+            def done(error):
+                btn_tracker_update.set_sensitive(True)
+                tracker_status.set_text(f"❌ Update failed: {error}" if error else "✅ " + self._tracker_status_text())
+
+            self.refresh_tracker_list_async(done)
+
+        btn_tracker_update.connect("clicked", _tracker_update_clicked)
+        tracker_card.pack_start(btn_tracker_update, False, False, 0)
+        priv_box.pack_start(tracker_card, False, False, 0)
+
+        sites_card = self._create_setting_card("SITES, PASSWORDS & REPORT")
+        sites_card.pack_start(
+            self._create_toggle_row(
+                "🔑 Offer to save passwords",
+                "Saved in your system keyring (GNOME Keyring, KWallet or KeePassXC), never in Bharat Browser's own files. "
+                "Not used in private windows.",
+                self.passwords_enabled,
+                self.on_passwords_toggled
+            ),
+            False, False, 0
+        )
+        for label_text, handler in (
+            ("🔑 Manage saved passwords…", lambda b: self.open_password_manager(dialog)),
+            ("🌐 Manage site settings & permissions…", lambda b: self.open_site_settings_manager(dialog)),
+            ("📊 Open my Privacy Report", lambda b: (dialog.destroy(), self.open_privacy_report())),
+        ):
+            site_btn = Gtk.Button(label=label_text)
+            site_btn.get_style_context().add_class("settings-action-btn")
+            site_btn.connect("clicked", handler)
+            sites_card.pack_start(site_btn, False, False, 0)
+        priv_box.pack_start(sites_card, False, False, 0)
         stack.add_titled(priv_scroller, "privacy", "🛡️ Privacy")
 
         # --- Tab 3: Performance & Advanced --------------------------------
@@ -4038,6 +4917,16 @@ class BharatBrowserWindow(Gtk.Window):
         data_card.pack_start(btn_clear, False, False, 0)
         act_box.pack_start(data_card, False, False, 0)
 
+        import_card = self._create_setting_card("IMPORT FROM OTHER BROWSERS")
+        import_card.pack_start(self._hint("Bring your bookmarks and history from Firefox, Chrome, Chromium, Brave, Edge, "
+                                          "Vivaldi or Opera, or from an exported bookmarks .html file."), False, False, 0)
+        btn_import = Gtk.Button(label="📥 Import bookmarks & history…")
+        btn_import.get_style_context().add_class("settings-primary-btn")
+        btn_import.set_sensitive(not self.is_private)
+        btn_import.connect("clicked", lambda b: self.open_import_dialog(dialog))
+        import_card.pack_start(btn_import, False, False, 2)
+        act_box.pack_start(import_card, False, False, 0)
+
         window_card = self._create_setting_card("WINDOW & NAVIGATION")
         btn_private = Gtk.Button(label="🕵 Open New Private Window (Ctrl+Shift+N)")
         btn_private.get_style_context().add_class("settings-action-btn")
@@ -4050,7 +4939,8 @@ class BharatBrowserWindow(Gtk.Window):
         about_lbl.set_markup(
             f"<b>Bharat Browser v{self.current_version}</b>\n"
             f"<small>Modern, Ultra-Fast &amp; Privacy-First Linux Browser\n"
-            f"Engineered in INDIA 🇮🇳</small>"
+            f"Engineered in INDIA "
+            "<span foreground='#ff9933'>▰</span><span foreground='#e2e8f0'>▰</span><span foreground='#138808'>▰</span></small>"
         )
         about_lbl.get_style_context().add_class("settings-hint-label")
         about_card.pack_start(about_lbl, False, False, 0)
@@ -4100,6 +4990,25 @@ class BharatBrowserWindow(Gtk.Window):
         dialog.run()
         dialog.destroy()
 
+    def on_spellcheck_toggled(self, active):
+        self.spellcheck_enabled = active
+        try:
+            self.context.set_spell_checking_enabled(active)
+        except Exception as e:
+            print("Spell-check toggle note:", e)
+        self.save_settings()
+
+    def on_tracker_lists_toggled(self, active):
+        self.tracker_lists_enabled = active
+        self.save_settings()
+        self._compile_content_blocker_filter()  # recompile with or without the downloaded list
+        if active and not self.is_private:
+            self._maybe_refresh_tracker_list()
+
+    def on_passwords_toggled(self, active):
+        self.passwords_enabled = active
+        self.save_settings()
+
     def on_devtools_toggled(self, active):
         self.dev_tools_enabled = active
         self.web_settings.set_enable_developer_extras(active)
@@ -4145,36 +5054,841 @@ class BharatBrowserWindow(Gtk.Window):
             "🎮 GPU Acceleration " + ("enabled" if active else "disabled — using software rendering")
         )
 
-    def on_permission_request(self, webview, request):
-        uri = webview.get_uri() or "This site"
-        kind_labels = {
-            WebKit2.UserMediaPermissionRequest: "camera/microphone access",
-            WebKit2.GeolocationPermissionRequest: "your location",
-            WebKit2.NotificationPermissionRequest: "notifications",
-        }
-        kind = "a permission"
-        for cls, label in kind_labels.items():
-            if isinstance(request, cls):
-                kind = label
-                break
+    # ------------------------------------------------------------------
+    # Per-site policy: ad blocking, JavaScript and zoom remembered per host
+    # ------------------------------------------------------------------
+    def _save_site_settings(self):
+        if not self.is_private:  # private windows keep these in memory only
+            save_site_settings(self.site_settings)
 
+    def _site_wants_filter(self, host):
+        return self.adblock_enabled and self.site_settings.get(host, {}).get("adblock") is not False
+
+    def _settings_without_javascript(self):
+        clone = WebKit2.Settings()
+        for prop in self.web_settings.list_properties():
+            if prop.flags & GObject.ParamFlags.WRITABLE and not prop.flags & GObject.ParamFlags.CONSTRUCT_ONLY:
+                try:
+                    clone.set_property(prop.name, self.web_settings.get_property(prop.name))
+                except Exception:
+                    pass
+        clone.set_enable_javascript(False)
+        return clone
+
+    def _apply_site_policy(self, webview, host):
+        """Make this webview's content blocker / JavaScript setting match the
+        per-site choices for `host`. Called when a navigation starts, so it is in
+        place before the new page's document is created."""
+        entry = self.site_settings.get(host, {})
+        want_filter = self._site_wants_filter(host)
+        if self.content_filter is not None and want_filter != getattr(webview, "_bharat_filter_on", False):
+            ucm = webview.get_user_content_manager()
+            if want_filter:
+                ucm.add_filter(self.content_filter)
+            else:
+                ucm.remove_filter(self.content_filter)
+            webview._bharat_filter_on = want_filter
+        js_off = entry.get("javascript") is False
+        if js_off != getattr(webview, "_bharat_js_off", False):
+            webview.set_settings(self._settings_without_javascript() if js_off else self.web_settings)
+            webview._bharat_js_off = js_off
+
+    def _remember_zoom(self, webview):
+        host = site_host_of(webview.get_uri())
+        if not host:
+            return
+        level = round(webview.get_zoom_level(), 2)
+        set_site_value(self.site_settings, host, "zoom", None if abs(level - 1.0) < 0.01 else level)
+        self._save_site_settings()
+
+    def _apply_saved_zoom(self, webview):
+        host = site_host_of(webview.get_uri())
+        if not host:
+            return
+        level = self.site_settings.get(host, {}).get("zoom", 1.0)
+        if isinstance(level, (int, float)) and abs(webview.get_zoom_level() - level) > 0.01:
+            webview.set_zoom_level(max(self.ZOOM_MIN, min(self.ZOOM_MAX, level)))
+
+    # ------------------------------------------------------------------
+    # Permissions (camera/mic, location, notifications) with "remember"
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _permission_kind(request):
+        if isinstance(request, WebKit2.UserMediaPermissionRequest):
+            return "media"
+        if isinstance(request, WebKit2.GeolocationPermissionRequest):
+            return "location"
+        if isinstance(request, WebKit2.NotificationPermissionRequest):
+            return "notifications"
+        return None
+
+    def on_permission_request(self, webview, request):
+        host = site_host_of(webview.get_uri())
+        kind = self._permission_kind(request)
+        remembered = get_site_permission(self.site_settings, host, kind) if kind and host else None
+        if remembered == "allow":
+            request.allow()
+            return True
+        if remembered == "deny":
+            request.deny()
+            return True
+
+        what = {"media": "camera/microphone access", "location": "your location",
+                "notifications": "notifications"}.get(kind, "a permission")
         dialog = Gtk.MessageDialog(
             transient_for=self,
             modal=True,
             destroy_with_parent=True,
             message_type=Gtk.MessageType.QUESTION,
             buttons=Gtk.ButtonsType.YES_NO,
-            text=f"Allow {kind}?"
+            text=f"Allow {what}?"
         )
         dialog.get_style_context().add_class("bharat-dialog")
-        dialog.format_secondary_text(uri)
+        dialog.format_secondary_text(webview.get_uri() or "This site")
+        remember_chk = None
+        if kind and host:
+            remember_chk = Gtk.CheckButton(label=f"Remember my choice for {host}")
+            dialog.get_message_area().pack_start(remember_chk, False, False, 6)
+            remember_chk.show()
         response = dialog.run()
+        remember = bool(remember_chk and remember_chk.get_active())
         dialog.destroy()
-        if response == Gtk.ResponseType.YES:
-            request.allow()
-        else:
-            request.deny()
+        allowed = response == Gtk.ResponseType.YES
+        if remember:
+            set_site_value(self.site_settings, host, "permissions", "allow" if allowed else "deny", sub=kind)
+            self._save_site_settings()
+        request.allow() if allowed else request.deny()
         return True
+
+    # ------------------------------------------------------------------
+    # Privacy statistics + report page
+    # ------------------------------------------------------------------
+    def _count_event(self, key):
+        self.stats[key] = self.stats.get(key, 0) + 1
+        self.session_stats[key] = self.session_stats.get(key, 0) + 1
+
+    def _count_blocked(self, webview, uri):
+        self._count_event("blocked")
+        self.blocked_domains[site_host_of(uri)] += 1
+        self.blocked_sites[site_host_of(webview.get_uri())] += 1
+        if not self.is_private:
+            self._schedule_session_save()  # stats ride along with the debounced session write
+
+    def build_privacy_report_html(self):
+        esc = html_module.escape
+        since = time.strftime("%d %b %Y", time.localtime(self.stats.get("since", time.time())))
+
+        def card(label, value, sub=""):
+            return (f"<div class='card'><div class='n'>{value:,}</div><div class='l'>{esc(label)}</div>"
+                    f"<div class='s'>{esc(sub)}</div></div>")
+
+        def table(title, counter, empty):
+            rows = "".join(
+                f"<tr><td>{esc(host or '(unknown)')}</td><td class='c'>{count:,}</td>"
+                f"<td class='b'><span style='width:{max(4, int(100 * count / max(counter.values())))}%'></span></td></tr>"
+                for host, count in counter.most_common(10))
+            body = f"<table>{rows}</table>" if rows else f"<p class='e'>{esc(empty)}</p>"
+            return f"<section><h2>{esc(title)}</h2>{body}</section>"
+
+        s, t = self.session_stats, self.stats
+        return f"""<!doctype html><html><head><meta charset="utf-8"><title>Privacy Report</title><style>
+body{{margin:0;background:#0b0e14;color:#f8fafc;font-family:system-ui,sans-serif;padding:0 20px}}
+.flag{{position:fixed;top:0;left:0;right:0;height:5px;background:linear-gradient(90deg,#ff9933 33%,#fff 33% 66%,#138808 66%)}}
+.wrap{{max-width:760px;margin:0 auto;padding:44px 0 60px}}h1{{margin:0 0 4px}}.sub{{color:#94a3b8;margin-bottom:26px}}
+.cards{{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:10px}}
+.card{{background:#11151d;border:1px solid #243049;border-radius:14px;padding:18px;border-left:3px solid #6366f1}}
+.n{{font-size:30px;font-weight:800}}.l{{color:#cbd5e1;margin-top:2px}}.s{{color:#64748b;font-size:12px;margin-top:6px}}
+h2{{font-size:15px;color:#a5b4fc;letter-spacing:.5px;margin:30px 0 8px}}
+table{{width:100%;border-collapse:collapse}}td{{padding:7px 4px;border-bottom:1px solid #1e293b;font-size:14px}}
+td.c{{text-align:right;color:#cbd5e1;width:70px}}td.b{{width:30%}}td.b span{{display:block;height:8px;border-radius:99px;background:linear-gradient(90deg,#6366f1,#8b5cf6)}}
+.e{{color:#64748b}}.note{{color:#64748b;font-size:12px;margin-top:30px;line-height:1.6}}
+@media(max-width:560px){{.cards{{grid-template-columns:1fr}}}}
+</style></head><body><div class="flag"></div><div class="wrap">
+<h1>🛡️ Privacy Report</h1><div class="sub">What Bharat Browser protected you from. Totals since {esc(since)}.</div>
+<div class="cards">{card("Trackers & ads blocked", t.get("blocked", 0), f"{s.get('blocked', 0):,} this session")}
+{card("Tracking parameters removed", t.get("params", 0), f"{s.get('params', 0):,} this session")}
+{card("Connections upgraded to HTTPS", t.get("https", 0), f"{s.get('https', 0):,} this session")}</div>
+{table("Most blocked tracker domains (this session)", self.blocked_domains, "Nothing blocked yet this session.")}
+{table("Sites with the most blocked requests (this session)", self.blocked_sites, "Nothing blocked yet this session.")}
+<div class="note">Counts cover requests blocked by the browser's built-in shield. The native content blocker and downloaded tracker lists also work silently, so real protection is higher than shown. {"Private windows don't save any of this." if self.is_private else ""}</div>
+</div></body></html>"""
+
+    def open_privacy_report(self):
+        webview = self.create_new_tab(url="about:blank")
+        html = self.build_privacy_report_html()
+        GLib.idle_add(lambda: webview.load_html(html, None))
+
+    # ------------------------------------------------------------------
+    # HTTPS-only warning page + the bharat:// scheme it uses
+    # ------------------------------------------------------------------
+    def _on_bharat_scheme(self, request, user_data):
+        """Serves bharat:// links created by our own pages. allow-http only works
+        with a one-time token minted by the warning page, so a website can't use
+        it to switch off HTTPS upgrading for a host of its choosing."""
+        parsed = urllib.parse.urlparse(request.get_uri())
+        page = "<html><body style='background:#0b0e14;color:#cbd5e1;font-family:sans-serif;padding:40px'>Nothing here.</body></html>"
+        if parsed.netloc == "allow-http":
+            token = (urllib.parse.parse_qs(parsed.query).get("t") or [""])[0]
+            target = self._http_tokens.pop(token, "")
+            host = site_host_of(target)
+            if target.startswith("http://") and host:
+                self._http_allowed_hosts.add(host)
+                page = f"<html><head><meta http-equiv='refresh' content='0;url={html_module.escape(target, quote=True)}'></head></html>"
+        data = page.encode("utf-8")
+        request.finish(Gio.MemoryInputStream.new_from_bytes(GLib.Bytes.new(data)), len(data), "text/html")
+
+    def _recently_upgraded_to_https(self, host):
+        return time.monotonic() - self._recent_https_upgrades.get(host, -1e9) < 30
+
+    def _show_https_warning(self, webview, failing_uri, error_message):
+        host = site_host_of(failing_uri)
+        http_uri = "http://" + failing_uri[len("https://"):]
+        token = secrets_module.token_urlsafe(12)
+        self._http_tokens[token] = http_uri
+        if len(self._http_tokens) > 50:
+            self._http_tokens.pop(next(iter(self._http_tokens)))
+        esc = html_module.escape
+        body = (f"<p>Bharat Browser tried a secure (HTTPS) connection to <b>{esc(host)}</b> but couldn't connect. "
+                "The site may be down, or it may not support HTTPS.</p>"
+                "<p style='color:#fca5a5'>If you continue over plain HTTP, anyone on your network can read or change "
+                "what you send and receive. Don't enter passwords or personal details.</p>")
+        actions = (f'<a class="btn" href="{esc(failing_uri, quote=True)}">Try again</a>'
+                   f'<a class="btn alt" href="bharat://allow-http?t={token}">Continue to HTTP (not secure)</a>')
+        page = build_notice_page("🔓", "Secure connection unavailable", body, actions, error_message)
+        GLib.idle_add(lambda: webview.load_html(page, failing_uri))
+        self.statusbar.push(self.context_id, f"🔓 {host} didn't answer over HTTPS")
+
+    # ------------------------------------------------------------------
+    # Tabs: pinning, context menu, reopen closed tab
+    # ------------------------------------------------------------------
+    def reopen_closed_tab(self):
+        if not self._closed_tabs:
+            self.statusbar.push(self.context_id, "No recently closed tabs")
+            return
+        entry = self._closed_tabs.pop()
+        self.create_new_tab(entry["url"])
+
+    def _pinned_count(self):
+        return sum(1 for i in range(self.notebook.get_n_pages())
+                   if getattr(self.notebook.get_nth_page(i), "_bharat_pinned", False))
+
+    def set_tab_pinned(self, tab_box, pinned):
+        if bool(getattr(tab_box, "_bharat_pinned", False)) == bool(pinned):
+            return
+        tab_box._bharat_pinned = bool(pinned)
+        tab_box._bharat_close_btn.set_visible(not pinned)
+        tab_box._bharat_label.set_width_chars(7 if pinned else 12)
+        tab_box._bharat_label.set_max_width_chars(9 if pinned else 18)
+        webview = tab_box._bharat_webview
+        self._apply_display_title(webview)
+        count = sum(1 for i in range(self.notebook.get_n_pages())
+                    if getattr(self.notebook.get_nth_page(i), "_bharat_pinned", False)
+                    and self.notebook.get_nth_page(i) is not tab_box)
+        self.notebook.reorder_child(tab_box, count)
+        self._schedule_session_save()
+
+    def close_other_tabs(self, keep_box):
+        for i in reversed(range(self.notebook.get_n_pages())):
+            tb = self.notebook.get_nth_page(i)
+            if tb is not keep_box and not getattr(tb, "_bharat_pinned", False):
+                self.close_tab(tb)
+
+    def close_tabs_to_right(self, tab_box):
+        start = self.notebook.page_num(tab_box) + 1
+        for i in reversed(range(start, self.notebook.get_n_pages())):
+            tb = self.notebook.get_nth_page(i)
+            if not getattr(tb, "_bharat_pinned", False):
+                self.close_tab(tb)
+
+    def duplicate_tab(self, tab_box):
+        uri = self._suspended_tab_uris.get(id(tab_box)) or tab_box._bharat_webview.get_uri()
+        if uri and not uri.startswith("about:"):
+            self.create_new_tab(uri)
+
+    def _on_tab_header_click(self, tab_box, event):
+        if event.type != Gdk.EventType.BUTTON_PRESS:
+            return False
+        if event.button == 2:  # middle-click closes, like most browsers
+            if not getattr(tab_box, "_bharat_pinned", False):
+                self.close_tab(tab_box)
+            return True
+        if event.button != 3:
+            return False
+        menu = Gtk.Menu()
+        pinned = getattr(tab_box, "_bharat_pinned", False)
+        entries = [
+            ("Reload", lambda: tab_box._bharat_webview.reload()),
+            ("Duplicate Tab", lambda: self.duplicate_tab(tab_box)),
+            ("Unpin Tab" if pinned else "Pin Tab", lambda: self.set_tab_pinned(tab_box, not pinned)),
+            None,
+            ("Close Tab", lambda: self.close_tab(tab_box)),
+            ("Close Other Tabs", lambda: self.close_other_tabs(tab_box)),
+            ("Close Tabs to the Right", lambda: self.close_tabs_to_right(tab_box)),
+            None,
+            ("Reopen Closed Tab", self.reopen_closed_tab),
+        ]
+        for entry in entries:
+            if entry is None:
+                menu.append(Gtk.SeparatorMenuItem())
+                continue
+            item = Gtk.MenuItem(label=entry[0])
+            item.connect("activate", lambda _i, fn=entry[1]: fn())
+            menu.append(item)
+        menu.show_all()
+        menu.popup_at_pointer(event)
+        return True
+
+    # ------------------------------------------------------------------
+    # Reader mode
+    # ------------------------------------------------------------------
+    def toggle_reader_mode(self):
+        webview = self.get_active_webview()
+        uri = (webview.get_uri() or "") if webview else ""
+        if not uri.startswith(("http://", "https://", "file://")):
+            self.statusbar.push(self.context_id, "📖 Reader mode works on web pages")
+            return
+        webview.run_javascript(READER_MODE_JS, None, self._on_reader_result, None)
+
+    def _on_reader_result(self, webview, result, user_data):
+        try:
+            value = webview.run_javascript_finish(result).get_js_value().to_string()
+        except Exception as e:
+            self.statusbar.push(self.context_id, f"📖 Reader mode unavailable on this page ({e})")
+            return
+        if value == "no-article":
+            self.statusbar.push(self.context_id, "📖 No readable article found on this page")
+        elif value == "opened":
+            self.statusbar.push(self.context_id, "📖 Reader mode on — press Esc to close")
+
+    # ------------------------------------------------------------------
+    # Main menu (the ☰ button) and the per-site popover (lock icon)
+    # ------------------------------------------------------------------
+    def show_main_menu(self, button):
+        popover = Gtk.Popover.new(button)
+        popover.get_style_context().add_class("bharat-menu")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.set_margin_start(8); box.set_margin_end(8); box.set_margin_top(8); box.set_margin_bottom(8)
+
+        def item(label, fn, enabled=True):
+            b = Gtk.ModelButton()
+            b.set_property("text", label)
+            b.set_sensitive(enabled)
+            b.connect("clicked", lambda _b: (popover.popdown(), GLib.idle_add(lambda: (fn(), False)[1])))
+            box.pack_start(b, False, False, 0)
+
+        def sep():
+            box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 4)
+
+        item("New Tab  (Ctrl+T)", lambda: self.create_new_tab(self.homepage))
+        item("New Private Window  (Ctrl+Shift+N)", self.open_private_window)
+        item("Reopen Closed Tab  (Ctrl+Shift+T)", self.reopen_closed_tab, bool(self._closed_tabs))
+        sep()
+        item("Reader Mode  (Ctrl+Alt+R)", self.toggle_reader_mode)
+        item("Print…  (Ctrl+P)", self.print_active_page)
+        item("Find in Page  (Ctrl+F)", self.open_find_bar)
+        zoom_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        zoom_row.pack_start(Gtk.Label(label="Zoom", xalign=0.0), True, True, 8)
+        for text, fn in (("−", lambda: self.adjust_zoom(-0.1)), ("100%", lambda: self.adjust_zoom(reset=True)),
+                         ("+", lambda: self.adjust_zoom(0.1))):
+            zb = Gtk.Button(label=text)
+            zb.get_style_context().add_class("settings-action-btn")
+            zb.connect("clicked", lambda _b, fn=fn: fn())
+            zoom_row.pack_start(zb, False, False, 0)
+        box.pack_start(zoom_row, False, False, 4)
+        sep()
+        item("Bookmarks  (Ctrl+Shift+O)", self.open_bookmark_manager)
+        item("History  (Ctrl+H)", self.open_history_tab)
+        item("Downloads", lambda: self.on_downloads_clicked(None))
+        item("Privacy Report", self.open_privacy_report)
+        sep()
+        item("Settings", lambda: self.on_settings_clicked(None))
+        popover.add(box)
+        box.show_all()
+        popover.popup()
+
+    def show_site_popover(self):
+        webview = self.get_active_webview()
+        uri = (webview.get_uri() or "") if webview else ""
+        host = site_host_of(uri)
+        if not host:
+            return
+        popover = Gtk.Popover.new(self.url_entry)
+        rect = self.url_entry.get_icon_area(Gtk.EntryIconPosition.PRIMARY)
+        popover.set_pointing_to(rect)
+        popover.get_style_context().add_class("bharat-menu")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        for setter in (box.set_margin_start, box.set_margin_end, box.set_margin_top, box.set_margin_bottom):
+            setter(14)
+
+        secure = uri.startswith("https://")
+        head = Gtk.Label(xalign=0.0)
+        head.set_markup(f"<b>{GLib.markup_escape_text(host)}</b>\n<small>"
+                        + ("🔒 Secure connection (HTTPS)" if secure else "⚠️ Not secure (HTTP)") + "</small>")
+        box.pack_start(head, False, False, 0)
+        box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 2)
+        entry = self.site_settings.get(host, {})
+
+        def switch_row(text, active, on_change):
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            row.pack_start(Gtk.Label(label=text, xalign=0.0), True, True, 0)
+            sw = Gtk.Switch()
+            sw.set_active(active)
+            sw.connect("notify::active", lambda s, _p: on_change(s.get_active()))
+            row.pack_end(sw, False, False, 0)
+            box.pack_start(row, False, False, 0)
+
+        def change(key, value, reload=True):
+            set_site_value(self.site_settings, host, key, value)
+            self._save_site_settings()
+            self._apply_site_policy(webview, host)
+            if reload:
+                webview.reload()
+
+        switch_row("Block ads & trackers", entry.get("adblock") is not False,
+                   lambda on: change("adblock", None if on else False))
+        switch_row("Allow JavaScript", entry.get("javascript") is not False,
+                   lambda on: change("javascript", None if on else False))
+        if not self.is_private:
+            switch_row("Offer to save passwords", entry.get("passwords") is not False,
+                       lambda on: change("passwords", None if on else False, reload=False))
+        zoom = round(webview.get_zoom_level() * 100)
+        zrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        zrow.pack_start(Gtk.Label(label=f"Zoom: {zoom}% (remembered for this site)", xalign=0.0), True, True, 0)
+        zreset = Gtk.Button(label="Reset")
+        zreset.get_style_context().add_class("settings-action-btn")
+        zreset.connect("clicked", lambda _b: (self.adjust_zoom(reset=True), popover.popdown()))
+        zrow.pack_end(zreset, False, False, 0)
+        box.pack_start(zrow, False, False, 0)
+
+        perms = entry.get("permissions") or {}
+        for kind, label in PERMISSION_KINDS.items():
+            if kind in perms:
+                prow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                prow.pack_start(Gtk.Label(label=f"{label}: {'Allowed' if perms[kind] == 'allow' else 'Blocked'}", xalign=0.0), True, True, 0)
+                pbtn = Gtk.Button(label="Reset")
+                pbtn.get_style_context().add_class("settings-action-btn")
+                pbtn.connect("clicked", lambda _b, k=kind: (set_site_value(self.site_settings, host, "permissions", None, sub=k),
+                                                            self._save_site_settings(), popover.popdown()))
+                prow.pack_end(pbtn, False, False, 0)
+                box.pack_start(prow, False, False, 0)
+
+        reader = Gtk.Button(label="📖 Reader mode")
+        reader.get_style_context().add_class("settings-action-btn")
+        reader.connect("clicked", lambda _b: (popover.popdown(), self.toggle_reader_mode()))
+        box.pack_start(reader, False, False, 2)
+        popover.add(box)
+        box.show_all()
+        popover.popup()
+
+    # ------------------------------------------------------------------
+    # Small shared UI helpers
+    # ------------------------------------------------------------------
+    def _make_dialog(self, title, parent=None, width=520, height=0):
+        dialog = Gtk.Dialog(title=title, transient_for=parent or self, modal=True, destroy_with_parent=True)
+        dialog.get_style_context().add_class("bharat-dialog")
+        self.apply_dark_titlebar(dialog, title)
+        close_btn = dialog.add_button("Close", Gtk.ResponseType.CLOSE)
+        close_btn.get_style_context().add_class("settings-primary-btn")
+        dialog.set_default_size(width, height)
+        area = dialog.get_content_area()
+        for setter in (area.set_margin_start, area.set_margin_end, area.set_margin_top, area.set_margin_bottom):
+            setter(16)
+        area.set_spacing(10)
+        return dialog, area
+
+    @staticmethod
+    def _hint(text):
+        label = Gtk.Label(xalign=0.0)
+        label.set_markup(f"<small>{GLib.markup_escape_text(text)}</small>")
+        label.get_style_context().add_class("settings-hint-label")
+        label.set_line_wrap(True)
+        return label
+
+    def _clear_infobar(self, bar=None):
+        if bar is not None and bar is not self._infobar:
+            return False
+        if self._infobar is not None:
+            self._infobar.destroy()
+            self._infobar = None
+        return False
+
+    def _show_infobar(self, message, buttons, extra=None, timeout=60):
+        """Slim bar under the toolbar. `buttons` = [(label, callback)]; it is dismissed
+        by any button, its close ✕, or after `timeout` seconds."""
+        self._clear_infobar()
+        bar = Gtk.InfoBar()
+        bar.get_style_context().add_class("bharat-infobar")
+        bar.set_show_close_button(True)
+        content = bar.get_content_area()
+        label = Gtk.Label(label=message, xalign=0.0)
+        label.set_line_wrap(True)
+        content.pack_start(label, True, True, 0)
+        if extra is not None:
+            content.pack_start(extra, False, False, 6)
+        callbacks = {}
+        for index, (text, callback) in enumerate(buttons, start=1):
+            button = bar.add_button(text, index)
+            button.get_style_context().add_class("settings-action-btn")
+            callbacks[index] = callback
+
+        def on_response(_bar, response):
+            callback = callbacks.get(response)
+            self._clear_infobar(bar)
+            if callback:
+                callback()
+
+        bar.connect("response", on_response)
+        self.infobar_box.pack_start(bar, False, False, 0)
+        bar.show_all()
+        self._infobar = bar
+        GLib.timeout_add_seconds(timeout, self._clear_infobar, bar)
+
+    # ------------------------------------------------------------------
+    # Import bookmarks / history
+    # ------------------------------------------------------------------
+    def _refill_autocomplete(self):
+        store = self.url_completion_store
+        store.clear()
+        for entry in self.url_history:
+            store.append([entry["url"], entry.get("title") or entry["url"]])
+
+    def _apply_import(self, bookmarks, history):
+        """Merge imported items into the live lists and save. Returns (new_bookmarks, new_history)."""
+        self.bookmarks, added_b = merge_bookmarks(self.bookmarks, bookmarks)
+        self.url_history, added_h = merge_history(self.url_history, history)
+        if added_b:
+            save_bookmarks(self.bookmarks)
+        if added_h:
+            save_url_history(self.url_history)
+            self._refill_autocomplete()
+        self.update_bookmark_star((self.get_active_webview().get_uri() or "") if self.get_active_webview() else "")
+        return added_b, added_h
+
+    def open_import_dialog(self, parent=None):
+        if self.is_private:
+            self.statusbar.push(self.context_id, "Import isn't available in private windows")
+            return
+        dialog, area = self._make_dialog("Import from another browser", parent, 540)
+        profiles = find_importable_profiles()
+        area.pack_start(self._hint("Reads bookmarks and history from the other browser's files on this computer. "
+                                   "Nothing is changed or deleted there, and nothing is sent anywhere."), False, False, 0)
+        status = Gtk.Label(xalign=0.0)
+        status.set_line_wrap(True)
+        status.get_style_context().add_class("settings-hint-label")
+
+        combo = Gtk.ComboBoxText()
+        chk_bookmarks = Gtk.CheckButton(label="Bookmarks")
+        chk_bookmarks.set_active(True)
+        chk_history = Gtk.CheckButton(label="Browsing history")
+        chk_history.set_active(True)
+        btn_import = Gtk.Button(label="📥 Import")
+        btn_import.get_style_context().add_class("settings-primary-btn")
+        if profiles:
+            for p in profiles:
+                combo.append_text(f"{p['browser']} — {p['profile']}")
+            combo.set_active(0)
+            area.pack_start(combo, False, False, 0)
+            area.pack_start(chk_bookmarks, False, False, 0)
+            area.pack_start(chk_history, False, False, 0)
+            area.pack_start(btn_import, False, False, 4)
+        else:
+            area.pack_start(Gtk.Label(label="No Firefox, Chrome, Chromium, Brave, Edge, Vivaldi or Opera profile found.", xalign=0.0), False, False, 0)
+
+        def finish(added_b, added_h, errors, source):
+            btn_import.set_sensitive(True)
+            lines = [f"✅ Imported from {source}: {added_b} new bookmarks, {added_h} new history entries."]
+            if errors:
+                lines.append("⚠️ Some data couldn't be read: " + "; ".join(errors))
+            status.set_text("\n".join(lines))
+            return False
+
+        def do_import(_btn):
+            profile = profiles[combo.get_active()]
+            want_b, want_h = chk_bookmarks.get_active(), chk_history.get_active()
+            btn_import.set_sensitive(False)
+            status.set_text("Importing…")
+
+            def worker():
+                bookmarks, history, errors = read_profile(profile, want_b, want_h)
+
+                def apply():
+                    added_b, added_h = self._apply_import(bookmarks, history)
+                    return finish(added_b, added_h, errors, profile["browser"])
+
+                GLib.idle_add(apply)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        btn_import.connect("clicked", do_import)
+
+        file_btn = Gtk.Button(label="📄 Import a bookmarks file (.html)…")
+        file_btn.get_style_context().add_class("settings-action-btn")
+
+        def pick_file(_btn):
+            chooser = Gtk.FileChooserDialog(title="Choose a bookmarks HTML file", transient_for=dialog,
+                                            action=Gtk.FileChooserAction.OPEN)
+            chooser.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Open", Gtk.ResponseType.OK)
+            chooser.get_style_context().add_class("bharat-dialog")
+            if chooser.run() == Gtk.ResponseType.OK:
+                path = chooser.get_filename()
+                try:
+                    with open(path, "r", encoding="utf-8", errors="replace") as f:
+                        marks = parse_netscape_bookmarks(f.read())
+                    added_b, _ = self._apply_import(marks, [])
+                    status.set_text(f"✅ Imported {added_b} new bookmarks from {os.path.basename(path)}.")
+                except Exception as e:
+                    status.set_text(f"❌ Couldn't read that file: {e}")
+            chooser.destroy()
+
+        file_btn.connect("clicked", pick_file)
+        area.pack_start(file_btn, False, False, 0)
+        area.pack_start(status, False, False, 0)
+        dialog.show_all()
+        dialog.run()
+        dialog.destroy()
+
+    # ------------------------------------------------------------------
+    # Saved passwords (system keyring)
+    # ------------------------------------------------------------------
+    def _setup_password_detection(self, webview):
+        """Hooks login-form detection into this webview's content manager (once per
+        manager, since popups share their opener's)."""
+        if self.is_private or self.password_script is None:
+            return
+        ucm = webview.get_user_content_manager()
+        if getattr(ucm, "_bharat_pw_ready", False):
+            return
+        ucm._bharat_pw_ready = True
+        ucm.add_script(self.password_script)
+        if ucm.register_script_message_handler_in_world("bharatPw", "bharat-pw"):
+            handler = ucm.connect("script-message-received::bharatPw", self._on_password_message)
+            webview._bharat_sig_ids = getattr(webview, "_bharat_sig_ids", []) + [(ucm, handler)]
+
+    def _on_password_message(self, ucm, js_result):
+        if self.is_private or not self.passwords_enabled:
+            return
+        try:
+            message = json.loads(js_result.get_js_value().to_json(0))
+            kind = message.get("type")
+        except Exception:
+            return
+        webview = self.get_active_webview()
+        uri = (webview.get_uri() or "") if webview else ""
+        host = site_host_of(uri)
+        if not host or self.site_settings.get(host, {}).get("passwords") is False:
+            return
+        if kind == "submit":
+            user, password = message.get("user", ""), message.get("pass", "")
+            if isinstance(user, str) and isinstance(password, str) and 0 < len(password) <= 1024 and len(user) <= 512:
+                self._offer_save_password(host, user, password)
+        elif kind == "form" and (uri.startswith("https://") or is_local_network_host(host)):
+            self._offer_fill_password(webview, host, uri)
+
+    def _offer_save_password(self, host, user, password):
+        if not self.secrets.available():
+            self.statusbar.push(self.context_id, "🔑 No system keyring found, so passwords can't be saved")
+            return
+        existing = [f for f in self.secrets.find(host) if f["username"] == user]
+        if existing:
+            if self.secrets.get_password(existing[0]["item"]) == password:
+                return
+            question, verb = f"Update the saved password for {user or 'this login'} on {host}?", "Update"
+        else:
+            question, verb = f"Save the password for {user or 'this login'} on {host}?", "Save"
+
+        def save():
+            ok = self.secrets.store(host, user, password)
+            self.statusbar.push(self.context_id, "🔑 Password saved to your keyring" if ok else "❌ Couldn't save the password")
+
+        def never():
+            set_site_value(self.site_settings, host, "passwords", False)
+            self._save_site_settings()
+            self.statusbar.push(self.context_id, f"🔑 Won't offer to save passwords on {host}")
+
+        self._show_infobar("🔑 " + question, [(verb, save), ("Never for this site", never), ("Not now", None)])
+
+    def _offer_fill_password(self, webview, host, uri):
+        key = (id(webview), uri)
+        if key in self._fill_offered:
+            return
+        self._fill_offered.add(key)
+        logins = self.secrets.find(host) if self.secrets.available() else []
+        if not logins:
+            return
+        combo = None
+        if len(logins) > 1:
+            combo = Gtk.ComboBoxText()
+            for login in logins:
+                combo.append_text(login["username"] or "(no username)")
+            combo.set_active(0)
+
+        def fill():
+            login = logins[combo.get_active() if combo else 0]
+            password = self.secrets.get_password(login["item"])
+            if password is None:
+                self.statusbar.push(self.context_id, "❌ Couldn't read the saved password")
+                return
+            script = PASSWORD_FILL_JS % (json.dumps(login["username"]), json.dumps(password))
+            webview.run_javascript(script, None, None, None)
+
+        who = logins[0]["username"] or "your saved login"
+        self._show_infobar(f"🔑 Fill {who if len(logins) == 1 else 'a saved login'} for {host}?",
+                           [("Fill", fill), ("Not now", None)], extra=combo)
+
+    def open_password_manager(self, parent=None):
+        dialog, area = self._make_dialog("Saved passwords", parent, 560, 420)
+        area.pack_start(self._hint("Passwords are stored in your system keyring (GNOME Keyring, KWallet or KeePassXC), "
+                                   "not in Bharat Browser's own files."), False, False, 0)
+        if not self.secrets.available():
+            area.pack_start(Gtk.Label(label="No keyring service was found, so password saving is unavailable.\n"
+                                            "Install and unlock GNOME Keyring, KWallet or KeePassXC (Secret Service).",
+                                      xalign=0.0), False, False, 0)
+            dialog.show_all(); dialog.run(); dialog.destroy()
+            return
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_vexpand(True)
+        listbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        scroller.add(listbox)
+        area.pack_start(scroller, True, True, 0)
+
+        def refresh():
+            for child in listbox.get_children():
+                child.destroy()
+            logins = self.secrets.find()
+            if not logins:
+                listbox.pack_start(Gtk.Label(label="No saved passwords yet.", xalign=0.0), False, False, 0)
+            for login in logins:
+                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                label = Gtk.Label(xalign=0.0)
+                label.set_markup(f"<b>{GLib.markup_escape_text(login['host'])}</b>\n<small>{GLib.markup_escape_text(login['username'] or '(no username)')}</small>")
+                row.pack_start(label, True, True, 0)
+                copy_btn = Gtk.Button(label="Copy password")
+                copy_btn.get_style_context().add_class("settings-action-btn")
+                copy_btn.connect("clicked", lambda _b, item=login["item"]: self._copy_password(item))
+                del_btn = Gtk.Button(label="Delete")
+                del_btn.get_style_context().add_class("settings-danger-btn")
+                del_btn.connect("clicked", lambda _b, item=login["item"]: (self.secrets.delete(item), refresh()))
+                row.pack_end(del_btn, False, False, 0)
+                row.pack_end(copy_btn, False, False, 0)
+                listbox.pack_start(row, False, False, 0)
+            listbox.show_all()
+
+        refresh()
+        dialog.show_all()
+        dialog.run()
+        dialog.destroy()
+
+    def _copy_password(self, item):
+        password = self.secrets.get_password(item)
+        if password is None:
+            return
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clipboard.set_text(password, -1)
+        self.statusbar.push(self.context_id, "🔑 Password copied — the clipboard clears in 30 seconds")
+
+        def clear():
+            if clipboard.wait_for_text() == password:
+                clipboard.clear()
+            return False
+
+        GLib.timeout_add_seconds(30, clear)
+
+    # ------------------------------------------------------------------
+    # Per-site settings manager
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _describe_site_entry(entry):
+        parts = []
+        for kind, value in (entry.get("permissions") or {}).items():
+            parts.append(f"{PERMISSION_KINDS.get(kind, kind)}: {'allowed' if value == 'allow' else 'blocked'}")
+        if isinstance(entry.get("zoom"), (int, float)):
+            parts.append(f"zoom {round(entry['zoom'] * 100)}%")
+        if entry.get("adblock") is False:
+            parts.append("ad blocking off")
+        if entry.get("javascript") is False:
+            parts.append("JavaScript off")
+        if entry.get("passwords") is False:
+            parts.append("no password prompts")
+        return ", ".join(parts) or "default settings"
+
+    def open_site_settings_manager(self, parent=None):
+        dialog, area = self._make_dialog("Site settings", parent, 560, 420)
+        area.pack_start(self._hint("Choices you made for individual sites: permissions, zoom, ad blocking, JavaScript. "
+                                   "Change them from the 🔒 icon in the address bar."
+                                   + (" Private windows keep these in memory only." if self.is_private else "")), False, False, 0)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_vexpand(True)
+        listbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        scroller.add(listbox)
+        area.pack_start(scroller, True, True, 0)
+        reset_all = Gtk.Button(label="Reset all sites")
+        reset_all.get_style_context().add_class("settings-danger-btn")
+        area.pack_start(reset_all, False, False, 0)
+
+        def refresh():
+            for child in listbox.get_children():
+                child.destroy()
+            if not self.site_settings:
+                listbox.pack_start(Gtk.Label(label="No site-specific settings yet.", xalign=0.0), False, False, 0)
+            for host in sorted(self.site_settings):
+                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                label = Gtk.Label(xalign=0.0)
+                label.set_line_wrap(True)
+                label.set_markup(f"<b>{GLib.markup_escape_text(host)}</b>\n<small>{GLib.markup_escape_text(self._describe_site_entry(self.site_settings[host]))}</small>")
+                row.pack_start(label, True, True, 0)
+                btn = Gtk.Button(label="Reset")
+                btn.get_style_context().add_class("settings-action-btn")
+                btn.connect("clicked", lambda _b, h=host: (self.site_settings.pop(h, None), self._save_site_settings(), refresh()))
+                row.pack_end(btn, False, False, 0)
+                listbox.pack_start(row, False, False, 0)
+            reset_all.set_sensitive(bool(self.site_settings))
+            listbox.show_all()
+
+        reset_all.connect("clicked", lambda _b: (self.site_settings.clear(), self._save_site_settings(), refresh()))
+        refresh()
+        dialog.show_all()
+        dialog.run()
+        dialog.destroy()
+
+    # ------------------------------------------------------------------
+    # Tracker list updates
+    # ------------------------------------------------------------------
+    def _tracker_status_text(self):
+        domains, fetched = load_tracker_list_cache()
+        if not domains:
+            return "Not downloaded yet."
+        days = int((time.time() - fetched) // 86400)
+        age = "today" if days <= 0 else f"{days} day{'s' if days != 1 else ''} ago"
+        return f"{len(domains):,} tracker domains • updated {age}"
+
+    def _maybe_refresh_tracker_list(self):
+        if self.tracker_lists_enabled and not self.is_private:
+            _, fetched = load_tracker_list_cache()
+            if time.time() - fetched > TRACKER_LIST_MAX_AGE:
+                self.refresh_tracker_list_async()
+        return False
+
+    def refresh_tracker_list_async(self, on_done=None):
+        """Download the tracker list in a background thread, then recompile the blocker."""
+        def worker():
+            try:
+                domains = fetch_tracker_list()
+                error = None
+            except Exception as e:
+                domains, error = None, str(e)
+
+            def finish():
+                if domains is not None:
+                    self._compile_content_blocker_filter()
+                if on_done:
+                    on_done(error)
+                return False
+
+            GLib.idle_add(finish)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def on_clear_cache_clicked(self, btn):
         try:

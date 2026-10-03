@@ -7,8 +7,9 @@ cd "$SCRIPT_DIR"
 
 # Refresh the updater checksum in package.json before packaging
 bash tools/update-checksum.sh
+python3 tools/check-version.py
 
-VERSION="1.3.7"
+VERSION="$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -40,6 +41,7 @@ License:        MIT
 URL:            https://github.com/Sangam1112/bharat-browser
 BuildArch:      noarch
 Requires:       python3 python3-gobject gtk3 webkit2gtk4.1
+Suggests:       gnome-keyring hunspell-en
 
 %description
 Bharat Browser is a modern, high-performance web browser designed with strict security, privacy protection, and site compatibility at its core.
@@ -55,6 +57,8 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.4.0-1
+- Pinned tabs and tab menu, reader mode, per-site controls, password saving via the system keyring, import from other browsers, tracker list updates, privacy report, HTTPS-only warning, spell check
 * Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.3.7-1
 - New friendly offline page (clear message, auto-reload when back online, kite mini-game); update check no longer claims 'latest version' when offline; redesigned Settings with banner, icon bubbles, switches and chips; README screenshots
 * Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.3.6-1

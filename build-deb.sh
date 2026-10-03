@@ -13,8 +13,9 @@ cd "$SCRIPT_DIR"
 
 # Refresh the updater checksum in package.json before packaging
 bash tools/update-checksum.sh
+python3 tools/check-version.py
 
-VERSION="1.3.7"
+VERSION="$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/deb_build_${PKG_NAME}"
@@ -47,6 +48,7 @@ Priority: optional
 Architecture: all
 Installed-Size: ${INSTALLED_SIZE_KB}
 Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-webkit2-4.1 | gir1.2-webkit2-4.0
+Suggests: gnome-keyring | keepassxc | kwalletmanager, hunspell-en-us | hunspell-en-gb
 Maintainer: Bharat Browser Developer <developer@bharatbrowser.org>
 Homepage: https://github.com/Sangam1112/bharat-browser
 Description: Modern, Ultra-Fast, and Privacy-First Web Browser
