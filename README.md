@@ -6,9 +6,9 @@
 
 <p><b>A tiny, fast, privacy-first web browser for Linux.<br>Built on WebKitGTK. Made in India.</b></p>
 
-[![Version](https://img.shields.io/badge/version-1.4.1-blue.svg)](https://github.com/Sangam1112/bharat-browser/releases/latest)
+[![Version](https://img.shields.io/badge/version-1.4.2-blue.svg)](https://github.com/Sangam1112/bharat-browser/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Ubuntu%20%7C%20Debian%20%7C%20Fedora%20%7C%20WSL2-orange.svg)](#-install)
+[![Platform](https://img.shields.io/badge/platform-Ubuntu%20%7C%20Debian%20%7C%20Fedora%20%7C%20RHEL%20family%20%7C%20WSL2-orange.svg)](#-install)
 [![Installer](https://img.shields.io/badge/installer-~100%20KB-brightgreen.svg)](#-small-by-design)
 [![Updates](https://img.shields.io/badge/updates-signed%20(Ed25519)-6366f1.svg)](#-keeping-it-up-to-date)
 
@@ -107,11 +107,11 @@ It is a native GTK3 desktop app, not a repackaged Chromium or Electron. The ad b
 Packages are on the [**Releases page**](https://github.com/Sangam1112/bharat-browser/releases/latest). Replace the version if a newer one is out.
 
 <table>
-<tr><th>Ubuntu / Debian / Mint</th><th>Fedora</th></tr>
+<tr><th>Ubuntu / Debian / Mint</th><th>Fedora / RHEL family</th></tr>
 <tr valign="top"><td>
 
 ```bash
-VERSION=1.4.1
+VERSION=1.4.2
 wget https://github.com/Sangam1112/bharat-browser/releases/download/v$VERSION/bharat-browser_${VERSION}-1_all.deb
 sudo apt install ./bharat-browser_${VERSION}-1_all.deb
 ```
@@ -119,7 +119,7 @@ sudo apt install ./bharat-browser_${VERSION}-1_all.deb
 </td><td>
 
 ```bash
-VERSION=1.4.1
+VERSION=1.4.2
 wget https://github.com/Sangam1112/bharat-browser/releases/download/v$VERSION/bharat-browser-${VERSION}-1.noarch.rpm
 sudo dnf install ./bharat-browser-${VERSION}-1.noarch.rpm
 ```
@@ -129,7 +129,7 @@ sudo dnf install ./bharat-browser-${VERSION}-1.noarch.rpm
 
 Use `apt install ./file.deb` (not `dpkg -i`) so the GTK and WebKit dependencies are resolved automatically. Then start it from your application menu, or run `bharat-browser`.
 
-> **Red Hat family (RHEL, Rocky, AlmaLinux, CentOS Stream):** the app itself runs on either WebKit2GTK 4.1 or 4.0, but the RPM and `install-fedora.sh` ask for the Fedora package name `webkit2gtk4.1`, which these systems call `webkit2gtk3`. The packages are **not tested on RHEL-family systems** and may fail to resolve dependencies there. Installing `python3-gobject gtk3 webkit2gtk3` yourself and copying the files by hand should work; RHEL-family reports and fixes are welcome via [issues](https://github.com/Sangam1112/bharat-browser/issues).
+> **Red Hat family (RHEL, Rocky Linux, AlmaLinux, CentOS Stream):** supported since 1.4.2. Fedora calls the WebKit package `webkit2gtk4.1` and these systems call it `webkit2gtk3`; the RPM and `install-fedora.sh` accept either, and the app itself works with WebKit2GTK 4.1 or 4.0. The install logic is covered by automated tests, but it hasn't been run on a real RHEL-family machine yet. If you try it, please tell us how it went in [issues](https://github.com/Sangam1112/bharat-browser/issues).
 
 ### Install from source (no root needed)
 
@@ -139,7 +139,7 @@ This installs for your user only (`~/.local`) and gives you the self-updater:
 git clone https://github.com/Sangam1112/bharat-browser.git
 cd bharat-browser
 ./install-ubuntu.sh        # Ubuntu / Debian / Mint
-./install-fedora.sh        # Fedora
+./install-fedora.sh        # Fedora, RHEL, Rocky, AlmaLinux, CentOS Stream
 ```
 
 Add `--system` to install for all users instead (it asks for `sudo`). If `bharat-browser` isn't found in a new terminal, add this to `~/.bashrc`:
@@ -152,7 +152,7 @@ export PATH="$HOME/.local/bin:$PATH"
 <summary><b>Fedora without git</b>: use the release archive</summary>
 
 ```bash
-VERSION=1.4.1
+VERSION=1.4.2
 wget https://github.com/Sangam1112/bharat-browser/releases/download/v$VERSION/bharat-browser_${VERSION}_fedora.tar.gz
 mkdir -p /tmp/bharat_fedora
 tar -xzf bharat-browser_${VERSION}_fedora.tar.gz -C /tmp/bharat_fedora

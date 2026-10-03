@@ -58,6 +58,65 @@ class InstallerTests(unittest.TestCase):
     def test_wsl_from_checkout(self):
         self.assert_installed(*self.run_installer(ROOT, "install-wsl.sh"), desktop=False)
 
+    # ---- Red Hat family: WebKit2GTK is "webkit2gtk4.1" on Fedora, "webkit2gtk3" on RHEL/Rocky/Alma ----
+    def _stateful_rpm_dnf(self, installed, dnf_fails=()):
+        """rpm -q answers from a list that `dnf install` appends to; chosen packages make dnf fail."""
+        state = os.path.join(self.tmp, "installed")
+        with open(state, "w") as f:
+            f.write("\n".join(installed) + "\n")
+        log = os.path.join(self.tmp, "dnf.log")
+        self._stub("rpm", f'#!/bin/sh\ngrep -qx "$2" {state}\n')
+        self._stub("dnf", f'''#!/bin/sh
+echo "$@" >> {log}
+shift; shift   # "install" "-y"
+for pkg in "$@"; do
+    case " {" ".join(dnf_fails)} " in *" $pkg "*) exit 1;; esac
+    echo "$pkg" >> {state}
+done
+''')
+        return log
+
+    BASE = ("python3", "python3-gobject", "gtk3")
+
+    def test_fedora_installer_accepts_rhel_style_webkit_package(self):
+        self._stateful_rpm_dnf(self.BASE + ("webkit2gtk3",))
+        home, result = self.run_installer(ROOT, "install-fedora.sh")
+        self.assert_installed(home, result)
+        self.assertIn("WebKit2GTK: webkit2gtk3", result.stdout)
+
+    def test_fedora_installer_falls_back_to_webkit2gtk3_when_4_1_is_unavailable(self):
+        log = self._stateful_rpm_dnf(self.BASE, dnf_fails=("webkit2gtk4.1",))
+        home, result = self.run_installer(ROOT, "install-fedora.sh")
+        self.assert_installed(home, result)
+        with open(log) as f:
+            tried = f.read()
+        self.assertLess(tried.index("webkit2gtk4.1"), tried.index("webkit2gtk3"), "tries Fedora's name first")
+
+    def test_fedora_installer_prefers_webkit2gtk4_1_and_installs_missing_base_packages(self):
+        log = self._stateful_rpm_dnf(("python3",))
+        home, result = self.run_installer(ROOT, "install-fedora.sh")
+        self.assert_installed(home, result)
+        with open(log) as f:
+            tried = f.read()
+        self.assertIn("python3-gobject", tried)
+        self.assertNotIn("webkit2gtk3", tried, "no fallback needed when 4.1 installs fine")
+
+    def test_fedora_installer_explains_both_names_when_nothing_works(self):
+        self._stateful_rpm_dnf(self.BASE, dnf_fails=("webkit2gtk4.1", "webkit2gtk3"))
+        home, result = self.run_installer(ROOT, "install-fedora.sh")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("webkit2gtk4.1", result.stderr)
+        self.assertIn("webkit2gtk3", result.stderr)
+        self.assertFalse(os.path.exists(os.path.join(home, ".local", "bin", "bharat-browser")), "nothing half-installed")
+
+    def test_rpm_accepts_either_webkit_package(self):
+        rpms = sorted(glob.glob(os.path.join(ROOT, "bharat-browser-*.noarch.rpm")))
+        if not rpms or not shutil.which("rpm"):
+            self.skipTest("no RPM built, or the rpm tool is missing")
+        out = subprocess.run(["rpm", "-qp", "--requires", rpms[-1]], capture_output=True, text=True).stdout
+        self.assertIn("webkit2gtk4.1", out)
+        self.assertIn("webkit2gtk3", out)
+
     def test_fedora_archive_works_when_extracted_alone(self):
         archives = sorted(glob.glob(os.path.join(ROOT, "bharat-browser_*_fedora.tar.gz")))
         if not archives:

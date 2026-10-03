@@ -3,6 +3,12 @@
 All notable changes to Bharat Browser. Versions follow `MAJOR.MINOR.PATCH`.
 Releases are signed; the in-app updater only installs a release whose signature verifies.
 
+## [1.4.2] - 2026-10-03
+
+### Changed
+- **Red Hat family:** the RPM now requires `(webkit2gtk4.1 or webkit2gtk3)` and `install-fedora.sh` accepts either, trying Fedora's `webkit2gtk4.1` first and falling back to `webkit2gtk3` (RHEL, Rocky Linux, AlmaLinux, CentOS Stream). The app itself already ran on WebKit2GTK 4.1 or 4.0. Not yet tested on a real RHEL-family system; the installer paths are covered by automated tests with stubbed `rpm`/`dnf`.
+- Clearer manual-install instructions when dependencies can't be installed automatically.
+
 ## [1.4.1] - 2026-10-03
 
 ### Fixed

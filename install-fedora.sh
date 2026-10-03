@@ -38,7 +38,12 @@ if [ "$EUID" -eq 0 ]; then
 fi
 
 # Same runtime dependencies build-rpm.sh declares in the RPM's Requires line.
-REQUIRED_PKGS="python3 python3-gobject gtk3 webkit2gtk4.1"
+# WebKit2GTK has different package names: Fedora ships "webkit2gtk4.1", while RHEL,
+# Rocky Linux, AlmaLinux and CentOS Stream ship "webkit2gtk3". Either one will do
+# (the app uses whichever WebKit2 typelib is present), so try them in this order.
+BASE_PKGS="python3 python3-gobject gtk3"
+WEBKIT_CANDIDATES="webkit2gtk4.1 webkit2gtk3"
+WEBKIT_HELP="webkit2gtk4.1 (Fedora) or webkit2gtk3 (RHEL, Rocky, AlmaLinux, CentOS Stream)"
 
 # Tell the user exactly what is missing and how to install it by hand, then
 # stop: continuing would leave a browser that dies on launch with an
@@ -51,53 +56,84 @@ print_manual_instructions() {
     for pkg in $MISSING_PKGS; do
         echo "  - $pkg" >&2
     done
+    if [ -z "$WEBKIT_PKG" ]; then
+        echo "  - $WEBKIT_HELP" >&2
+    fi
     echo "" >&2
-    echo "Install them manually, then re-run this script:" >&2
-    echo "  sudo dnf install -y${MISSING_PKGS}" >&2
+    echo "Install them manually, then re-run this script, e.g.:" >&2
+    echo "  sudo dnf install -y python3 python3-gobject gtk3 webkit2gtk4.1    # Fedora" >&2
+    echo "  sudo dnf install -y python3 python3-gobject gtk3 webkit2gtk3      # RHEL / Rocky / AlmaLinux" >&2
     echo "" >&2
-    echo "(Not on Fedora? Install the equivalents with your package manager:" >&2
-    echo "  Debian/Ubuntu: use ./install-ubuntu.sh instead," >&2
+    echo "(Not on a Red Hat-family system? Debian/Ubuntu: use ./install-ubuntu.sh instead," >&2
     echo "  or install python3, PyGObject (python3-gi), GTK 3, and WebKit2GTK 4.1.)" >&2
 }
 
+find_webkit_pkg() {
+    WEBKIT_PKG=""
+    for pkg in $WEBKIT_CANDIDATES; do
+        if rpm -q "$pkg" >/dev/null 2>&1; then
+            WEBKIT_PKG="$pkg"
+            return 0
+        fi
+    done
+    return 1
+}
+
+find_missing_base_pkgs() {
+    MISSING_PKGS=""
+    for pkg in $BASE_PKGS; do
+        if ! rpm -q "$pkg" >/dev/null 2>&1; then
+            MISSING_PKGS="$MISSING_PKGS $pkg"
+        fi
+    done
+}
+
 echo "[1/4] Checking dependencies..."
+WEBKIT_PKG=""
 if ! command -v rpm >/dev/null 2>&1; then
-    MISSING_PKGS=" $REQUIRED_PKGS"
+    MISSING_PKGS=" $BASE_PKGS"
     print_manual_instructions "'rpm' not found; this doesn't look like a Fedora/RHEL system, so dependencies can't be checked automatically."
     exit 1
 fi
 
-MISSING_PKGS=""
-for pkg in $REQUIRED_PKGS; do
-    if ! rpm -q "$pkg" >/dev/null 2>&1; then
-        MISSING_PKGS="$MISSING_PKGS $pkg"
-    fi
-done
+find_missing_base_pkgs
+find_webkit_pkg || true
 
-if [ -n "$MISSING_PKGS" ]; then
-    echo "Missing packages:${MISSING_PKGS}"
+if [ -n "$MISSING_PKGS" ] || [ -z "$WEBKIT_PKG" ]; then
+    if [ -z "$WEBKIT_PKG" ]; then
+        echo "Missing packages:${MISSING_PKGS} WebKit2GTK"
+    else
+        echo "Missing packages:${MISSING_PKGS}"
+    fi
     if ! command -v dnf >/dev/null 2>&1; then
         print_manual_instructions "'dnf' not found, so the missing packages can't be installed automatically."
         exit 1
     fi
     echo "Installing via dnf..."
-    if ! $DNF_PREFIX dnf install -y $MISSING_PKGS; then
-        print_manual_instructions "dnf failed to install the missing packages (no sudo access, no network, or the package is unavailable in your enabled repositories)."
-        exit 1
+    if [ -n "$MISSING_PKGS" ]; then
+        if ! $DNF_PREFIX dnf install -y $MISSING_PKGS; then
+            print_manual_instructions "dnf failed to install the missing packages (no sudo access, no network, or the package is unavailable in your enabled repositories)."
+            exit 1
+        fi
+    fi
+    if [ -z "$WEBKIT_PKG" ]; then
+        for pkg in $WEBKIT_CANDIDATES; do
+            echo "Trying $pkg..."
+            if $DNF_PREFIX dnf install -y "$pkg"; then
+                break
+            fi
+        done
     fi
     # dnf can exit 0 without installing everything (e.g. with --skip-broken
     # in dnf.conf), so verify rather than trust the exit status.
-    STILL_MISSING=""
-    for pkg in $MISSING_PKGS; do
-        rpm -q "$pkg" >/dev/null 2>&1 || STILL_MISSING="$STILL_MISSING $pkg"
-    done
-    if [ -n "$STILL_MISSING" ]; then
-        MISSING_PKGS="$STILL_MISSING"
+    find_missing_base_pkgs
+    find_webkit_pkg || true
+    if [ -n "$MISSING_PKGS" ] || [ -z "$WEBKIT_PKG" ]; then
         print_manual_instructions "these packages are still missing after dnf ran."
         exit 1
     fi
 else
-    echo "All dependencies already installed."
+    echo "All dependencies already installed (WebKit2GTK: $WEBKIT_PKG)."
 fi
 
 if [ "$USE_SUDO" = true ]; then

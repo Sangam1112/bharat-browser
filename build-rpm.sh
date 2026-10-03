@@ -40,7 +40,8 @@ Summary:        Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser
 License:        MIT
 URL:            https://github.com/Sangam1112/bharat-browser
 BuildArch:      noarch
-Requires:       python3 python3-gobject gtk3 webkit2gtk4.1
+# Fedora names the WebKit package webkit2gtk4.1; RHEL/Rocky/AlmaLinux/CentOS Stream call it webkit2gtk3.
+Requires:       python3 python3-gobject gtk3 (webkit2gtk4.1 or webkit2gtk3)
 Suggests:       gnome-keyring hunspell-en
 
 %description
@@ -57,6 +58,8 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.4.2-1
+- Red Hat family support: the RPM and install-fedora.sh accept either webkit2gtk4.1 (Fedora) or webkit2gtk3 (RHEL, Rocky, AlmaLinux, CentOS Stream)
 * Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.4.1-1
 - Update check asks GitHub's API first (no stale cache right after a release) and falls back to the raw address; clearer message when an update can't be installed automatically
 * Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.4.0-1
