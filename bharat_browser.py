@@ -1,12 +1,49 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.3.2 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.3.3 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
 import os
 import json
 import shutil
+
+APP_VERSION = "1.3.3"
+# The self-updater cannot rewrite a root-owned package install, so it keeps its updates in a per-user copy
+# that the launcher (/usr/bin/bharat-browser) prefers over the system one.
+USER_INSTALL_DIR = os.path.expanduser("~/.local/share/bharat-browser")
+SYSTEM_SCRIPT = "/usr/share/bharat-browser/bharat_browser.py"
+
+
+def _version_tuple(v):
+    import re
+    out = []
+    for token in re.split(r"[.\-+]", str(v)):
+        m = re.match(r"\d+", token)
+        if not m:
+            break
+        out.append(int(m.group()))
+    return tuple(out)
+
+
+def _prefer_newest_copy():
+    """If this is the per-user updated copy and the system package has since been upgraded past it, drop this
+    stale copy and start the system one, so an old per-user copy can never shadow a newer package."""
+    import re
+    here = os.path.abspath(__file__)
+    if os.path.dirname(here) != USER_INSTALL_DIR or not os.path.isfile(SYSTEM_SCRIPT):
+        return
+    try:
+        with open(SYSTEM_SCRIPT, encoding="utf-8") as f:
+            m = re.search(r'^APP_VERSION = "([^"]+)"', f.read(), re.M)
+        if m and _version_tuple(m.group(1)) > _version_tuple(APP_VERSION):
+            os.remove(here)
+            os.execv(sys.executable, [sys.executable, SYSTEM_SCRIPT] + sys.argv[1:])
+    except Exception:
+        pass
+
+
+_prefer_newest_copy()
 
 # CONFIG_DIR/CONFIG_FILE are also used later (load_persistent_settings() and
 # friends) — defined here first because Low Memory Mode's single-process
@@ -642,7 +679,7 @@ class BharatBrowserWindow(Gtk.Window):
     _global_css_loaded = False
 
     def __init__(self, private=False):
-        self.current_version = "1.3.2"
+        self.current_version = APP_VERSION
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -2629,8 +2666,14 @@ class BharatBrowserWindow(Gtk.Window):
         downloaded bytes against it before installing anything."""
         target_path = os.path.abspath(__file__)
         if not os.access(target_path, os.W_OK):
-            print(f"Update available but {target_path} is not writable; skipping auto-install.")
-            return False
+            # System-wide package install (root-owned): update a per-user copy instead, which the launcher prefers.
+            try:
+                os.makedirs(USER_INSTALL_DIR, exist_ok=True)
+            except OSError as e:
+                print(f"Update available but {target_path} is not writable and {USER_INSTALL_DIR} can't be created: {e}")
+                return False
+            target_path = os.path.join(USER_INSTALL_DIR, "bharat_browser.py")
+            print(f"{os.path.abspath(__file__)} is not writable; installing the update to {target_path} instead.")
         try:
             src_url = f"https://raw.githubusercontent.com/Sangam1112/bharat-browser/v{remote_version}/bharat_browser.py"
             req = urllib.request.Request(src_url, headers={"User-Agent": f"BharatBrowser/{self.current_version}"})
@@ -2656,6 +2699,7 @@ class BharatBrowserWindow(Gtk.Window):
                 f.write(new_source)
             os.chmod(tmp_path, 0o755)
             os.replace(tmp_path, target_path)
+            self._installed_script_path = target_path
             print(f"Installed update to {target_path}.")
             return True
         except Exception as e:
@@ -2671,7 +2715,7 @@ class BharatBrowserWindow(Gtk.Window):
             if hasattr(tab_box, '_bharat_webview'):
                 self._flush_page_view(tab_box._bharat_webview)
         try:
-            script = os.path.abspath(__file__)
+            script = getattr(self, '_installed_script_path', None) or os.path.abspath(__file__)
             os.execv(sys.executable, [sys.executable, script] + sys.argv[1:])
         except Exception as e:
             print("Restart failed:", e)
