@@ -12,6 +12,7 @@ PKGS=("bharat-browser_${VERSION}-1_all.deb" "bharat-browser-${VERSION}-1.noarch.
 
 python3 tools/check-version.py
 python3 tools/sign-release.py verify
+python3 tools/check-packages.py   # every package: same version, same signed bharat_browser.py
 for f in "${PKGS[@]}"; do [ -f "$f" ] || { echo "Missing $f: run build-deb.sh and build-rpm.sh first"; exit 1; }; done
 if ! git diff --quiet || ! git diff --cached --quiet; then echo "Commit your changes first."; exit 1; fi
 if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then echo "Tag ${TAG} already exists."; exit 1; fi
