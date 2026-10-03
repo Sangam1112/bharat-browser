@@ -1,8 +1,8 @@
-# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.3.6
+# 🇮🇳 Bharat Browser (`bharat-browser`) - v1.3.7
 
 > **Modern, Ultra-Fast, and Privacy-First Web Browser engineered for Linux (Fedora & Ubuntu)**
 
-[![Version](https://img.shields.io/badge/version-1.3.6-blue.svg)](https://github.com/Sangam1112/bharat-browser)
+[![Version](https://img.shields.io/badge/version-1.3.7-blue.svg)](https://github.com/Sangam1112/bharat-browser)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Fedora%20%7C%20Ubuntu%20%7C%20Linux-orange.svg)]()
 [![Privacy](https://img.shields.io/badge/privacy-Strict%20Enforcement-red.svg)]()
@@ -12,6 +12,29 @@
 ## 🌟 Overview
 
 **Bharat Browser** (`bharat-browser`) is a modern, high-performance web browser designed with strict security, privacy protection, and site compatibility at its core. It's a native, hardware-accelerated GTK3 + WebKit2GTK desktop application with a custom ad/tracker blocklist, tracking-parameter stripping, HTTPS upgrading, and a DarkReader-style dark mode built in-house (not bundled copies of the uBlock Origin, Privacy Badger, DarkReader, or ClearURLs projects).
+
+---
+
+## 📸 Screenshots
+
+### Friendly offline page
+No internet? Instead of a raw error, Bharat Browser explains what's wrong, reloads the page by itself the moment you're back online, and gives you a little kite game 🪁 to play while you wait.
+
+<p align="center"><img src="docs/screenshots/offline-page.png" alt="Bharat Browser offline page with a playable kite game" width="800"></p>
+
+### Settings
+A redesigned, tabbed settings window with toggle switches, icon badges and one-click actions.
+
+<table>
+  <tr>
+    <td align="center"><b>General</b><br><img src="docs/screenshots/settings-general.png" alt="General settings" width="380"></td>
+    <td align="center"><b>Privacy</b><br><img src="docs/screenshots/settings-privacy.png" alt="Privacy settings" width="380"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Performance</b><br><img src="docs/screenshots/settings-performance.png" alt="Performance settings" width="380"></td>
+    <td align="center"><b>Data &amp; Actions</b><br><img src="docs/screenshots/settings-data-actions.png" alt="Data and actions settings" width="380"></td>
+  </tr>
+</table>
 
 ---
 
@@ -72,18 +95,18 @@ cd bharat-browser
 ./install-fedora.sh
 ```
 
-**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.3.6_fedora.tar.gz`)**
+**Option B: Install via pre-packaged Fedora archive (`bharat-browser_1.3.7_fedora.tar.gz`)**
 ```bash
 # 1. Extract the release archive
-tar -xzf bharat-browser_1.3.6_fedora.tar.gz -C /tmp/bharat_fedora
+tar -xzf bharat-browser_1.3.7_fedora.tar.gz -C /tmp/bharat_fedora
 
 # 2. Run installer script from archive
 cd /tmp/bharat_fedora && ./install-fedora.sh
 ```
 
-**Option C: Install the RPM directly (`bharat-browser-1.3.6-1.noarch.rpm`)**
+**Option C: Install the RPM directly (`bharat-browser-1.3.7-1.noarch.rpm`)**
 ```bash
-sudo dnf install ./bharat-browser-1.3.6-1.noarch.rpm
+sudo dnf install ./bharat-browser-1.3.7-1.noarch.rpm
 ```
 
 ### 🟠 Ubuntu / Debian Linux Installation
@@ -98,9 +121,9 @@ cd bharat-browser
 ./install-ubuntu.sh
 ```
 
-**Option B: Install the .deb directly (`bharat-browser_1.3.6-1_all.deb`)**
+**Option B: Install the .deb directly (`bharat-browser_1.3.7-1_all.deb`)**
 ```bash
-sudo apt install ./bharat-browser_1.3.6-1_all.deb
+sudo apt install ./bharat-browser_1.3.7-1_all.deb
 ```
 `apt install ./file.deb` (not `dpkg -i`) so `apt` resolves and installs
 the GTK3/WebKit2GTK dependencies automatically. This always installs

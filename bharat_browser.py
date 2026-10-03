@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.3.6 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.3.7 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -8,7 +8,7 @@ import os
 import json
 import shutil
 
-APP_VERSION = "1.3.6"
+APP_VERSION = "1.3.7"
 # The self-updater cannot rewrite a root-owned package install, so it keeps its updates in a per-user copy
 # that the launcher (/usr/bin/bharat-browser) prefers over the system one.
 USER_INSTALL_DIR = os.path.expanduser("~/.local/share/bharat-browser")
@@ -93,7 +93,7 @@ try:
 except ValueError:
     gi.require_version('WebKit2', '4.0')
 
-from gi.repository import Gtk, Gdk, WebKit2, GLib, Gio, Pango
+from gi.repository import Gtk, Gdk, GdkPixbuf, WebKit2, GLib, Gio, Pango
 
 # Import high-rating open-source ad-blocking engine (adblockparser) if available
 for adblock_path in [
@@ -398,6 +398,138 @@ def verify_update_signature(version, source, signature_hex):
         return ed25519_verify(bytes.fromhex(UPDATE_PUBLIC_KEY_HEX), message, signature)
     except (ValueError, TypeError):
         return False
+
+
+# Only errors that mean the machine has no usable network. Per-site problems
+# ("name or service not known" for a mistyped domain, connection refused, a slow
+# server timing out) are deliberately not listed: they'd wrongly blame the user's
+# internet.
+_OFFLINE_ERROR_HINTS = (
+    "temporary failure in name resolution", "network is unreachable", "no route to host",
+)
+
+
+def looks_offline(error_text):
+    """True if an error message (WebKit/GLib/urllib) means 'no usable network', as
+    opposed to a problem with one particular site. Also true whenever the OS
+    itself reports no network at all."""
+    text = (error_text or "").lower()
+    if any(hint in text for hint in _OFFLINE_ERROR_HINTS):
+        return True
+    try:
+        return not Gio.NetworkMonitor.get_default().get_network_available()
+    except Exception:
+        return False
+
+
+_ERROR_PAGE_TEMPLATE = """<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% -10%,#16213a 0,#0b0e14 60%);
+ color:#f8fafc;font-family:system-ui,sans-serif;display:flex;justify-content:center;padding:0 20px}
+.flag{position:fixed;top:0;left:0;right:0;height:5px;background:linear-gradient(90deg,#ff9933 33%,#fff 33% 66%,#138808 66%)}
+.wrap{max-width:560px;width:100%;padding:56px 0 40px;text-align:center}
+.sig{position:relative;width:84px;height:84px;margin:0 auto 18px;display:flex;align-items:center;justify-content:center;font-size:42px}
+.sig i{position:absolute;inset:0;border:2px solid #ff9933;border-radius:50%;opacity:0;animation:p 2.4s infinite}
+.sig i:nth-child(2){animation-delay:.8s}.sig i:nth-child(3){animation-delay:1.6s}
+@keyframes p{0%{transform:scale(.4);opacity:.9}100%{transform:scale(1.25);opacity:0}}
+h1{font-size:28px;margin:0 0 10px}
+p{color:#cbd5e1;line-height:1.6;margin:8px 0}
+ul{text-align:left;display:inline-block;color:#cbd5e1;line-height:1.8;margin:4px 0}
+.btn{display:inline-block;margin:14px 0 4px;background:#2563eb;color:#fff;padding:11px 26px;border-radius:999px;
+ text-decoration:none;font-weight:600;box-shadow:0 4px 18px #2563eb55;transition:transform .15s}
+.btn:hover{transform:translateY(-2px)}
+.live{color:#4ade80;font-size:13px;margin-top:6px}
+.game{margin:26px auto 6px;border:1px solid #243049;border-radius:14px;overflow:hidden;background:#0f1626}
+canvas{display:block;width:100%;height:auto;cursor:pointer}
+.hint{color:#94a3b8;font-size:12px;margin:6px 0 18px}
+.tech{color:#64748b;font-size:12px;margin-top:22px;word-break:break-word}
+</style></head>
+<body data-uri="@URI@"><div class="flag"></div><div class="wrap">
+<div class="sig">@ICON@@PULSE@</div>
+<h1>@HEADING@</h1>
+@BODY@
+<a class="btn" href="@URI@">Try again</a>
+@LIVE@
+@GAME@
+<div class="tech">Technical details: @TECH@</div>
+</div>
+<script>
+var U=document.body.dataset.uri;
+@SCRIPT@
+</script></body></html>"""
+
+_OFFLINE_PAGE_SCRIPT = r"""
+var was=navigator.onLine;
+function back(){location.href=U}
+window.addEventListener('online',back);
+setInterval(function(){var n=navigator.onLine;if(n&&!was)back();was=n},3000);
+(function(){
+var c=document.getElementById('g'),x=c.getContext('2d'),W=c.width,H=c.height,best=0;
+var k,vy,birds,score,t,state;
+function reset(){k=H/2;vy=0;birds=[];score=0;t=0;state='play'}
+function flap(e){if(e)e.preventDefault();if(state=='idle'||state=='over')reset();vy=-5.4}
+c.addEventListener('mousedown',flap);c.addEventListener('touchstart',flap);
+document.addEventListener('keydown',function(e){if(e.code=='Space'||e.code=='ArrowUp')flap(e)});
+function bird(b){x.strokeStyle='#cbd5e1';x.lineWidth=2;x.beginPath();var f=Math.sin(t/4+b.p)*5;
+ x.moveTo(b.x-10,b.y+f);x.quadraticCurveTo(b.x-4,b.y-6,b.x,b.y);x.quadraticCurveTo(b.x+4,b.y-6,b.x+10,b.y+f);x.stroke()}
+function draw(){
+ var g=x.createLinearGradient(0,0,0,H);g.addColorStop(0,'#1e2a4a');g.addColorStop(1,'#f9731633');
+ x.fillStyle=g;x.fillRect(0,0,W,H);
+ x.strokeStyle='#64748b';x.lineWidth=1;x.beginPath();x.moveTo(60,H);x.lineTo(90,k+16);x.stroke();
+ x.save();x.translate(90,k);x.rotate(Math.max(-.5,Math.min(.6,vy/10)));
+ x.fillStyle='#ff9933';x.beginPath();x.moveTo(0,-16);x.lineTo(13,0);x.lineTo(0,16);x.lineTo(-13,0);x.closePath();x.fill();
+ x.fillStyle='#138808';x.beginPath();x.moveTo(0,-16);x.lineTo(13,0);x.lineTo(0,0);x.closePath();x.fill();
+ x.fillStyle='#fff';x.beginPath();x.moveTo(-13,0);x.lineTo(0,0);x.lineTo(0,16);x.closePath();x.fill();
+ x.strokeStyle='#fbbf24';x.beginPath();x.moveTo(0,16);for(var i=1;i<=4;i++)x.lineTo(Math.sin(t/5+i)*6,16+i*7);x.stroke();x.restore();
+ birds.forEach(bird);
+ x.fillStyle='#e2e8f0';x.font='14px system-ui';x.textAlign='left';x.fillText('Score '+score+'   Best '+best,10,20);
+ x.textAlign='center';x.font='16px system-ui';
+ if(state=='idle')x.fillText('Click or press Space to fly the kite',W/2,H/2-30);
+ if(state=='over')x.fillText('Cut! Click or press Space to fly again',W/2,H/2-30);
+}
+function step(){
+ if(state=='play'){t++;vy+=.3;k+=vy;
+  if(t%70==0)birds.push({x:W+10,y:30+Math.random()*(H-60),p:Math.random()*6,d:0});
+  birds.forEach(function(b){b.x-=2.6+score*.08;if(!b.d&&b.x<80){b.d=1;score++;best=Math.max(best,score)}
+   if(Math.abs(b.x-90)<18&&Math.abs(b.y-k)<18)state='over'});
+  birds=birds.filter(function(b){return b.x>-20});
+  if(k<8||k>H-8)state='over';}
+ draw();requestAnimationFrame(step)}
+reset();state='idle';step();
+})();
+"""
+
+
+def build_error_page(host, uri, error_message, offline):
+    """HTML for the 'page didn't load' screen. All page-supplied text is escaped."""
+    esc = GLib.markup_escape_text
+    page = _ERROR_PAGE_TEMPLATE
+    if offline:
+        parts = {
+            "ICON": "📡", "PULSE": "<i></i><i></i><i></i>",
+            "HEADING": "No internet connection",
+            "BODY": (f"<p>Bharat Browser couldn't reach <b>{esc(host)}</b> because your computer "
+                     "isn't connected to the internet.</p>"
+                     "<ul><li>Check that Wi-Fi or your network cable is connected</li>"
+                     "<li>Restart your router if other apps are offline too</li></ul>"),
+            "LIVE": "<div class='live'>🔄 This page will reload by itself when you're back online</div>",
+            "GAME": ("<div class='game'><canvas id='g' width='560' height='220'></canvas></div>"
+                     "<div class='hint'>While you wait: fly the kite 🪁 and dodge the birds</div>"),
+            "SCRIPT": _OFFLINE_PAGE_SCRIPT,
+        }
+    else:
+        parts = {
+            "ICON": "⚠️", "PULSE": "", "HEADING": "This page didn't load",
+            "BODY": f"<p>Bharat Browser couldn't reach <b>{esc(host)}</b>. The site may be down or the address may be wrong.</p>",
+            "LIVE": "", "GAME": "", "SCRIPT": "",
+        }
+    parts["TECH"] = esc(error_message)
+    parts["URI"] = esc(uri).replace('"', "&quot;")
+    # SCRIPT is trusted static code, substituted last so page text can't inject into it.
+    script = parts.pop("SCRIPT")
+    for key, value in parts.items():
+        page = page.replace(f"@{key}@", value)
+    return page.replace("@SCRIPT@", script)
 
 
 # Chrome-compatible UA so sites don't serve "unsupported browser" pages or flag
@@ -1721,6 +1853,88 @@ class BharatBrowserWindow(Gtk.Window):
             border-color: rgba(239, 68, 68, 0.5);
             color: #fecaca;
         }
+        /* --- Settings polish: header banner, icon bubbles, switches, chips --- */
+        .bharat-dialog .settings-title { color: #ffffff; font-size: 22px; font-weight: 800; }
+        .bharat-dialog .settings-subtitle { color: #94a3b8; font-size: 12px; }
+        .tricolor-strip {
+            min-height: 4px;
+            border-radius: 999px;
+            background-image: linear-gradient(to right, #ff9933 0%, #ff9933 33%, #f8fafc 33%, #f8fafc 66%, #138808 66%, #138808 100%);
+        }
+        .bharat-dialog .settings-card {
+            border-left: 3px solid #6366f1;
+            background-image: linear-gradient(135deg, rgba(99, 102, 241, 0.07), rgba(255, 255, 255, 0.0) 55%);
+        }
+        .bharat-dialog .settings-section-title {
+            color: #a5b4fc;
+            letter-spacing: 1.5px;
+            font-size: 11px;
+        }
+        .bharat-dialog .settings-icon-bubble {
+            background-image: linear-gradient(135deg, rgba(99, 102, 241, 0.35), rgba(139, 92, 246, 0.25));
+            border: 1px solid rgba(165, 180, 252, 0.35);
+            border-radius: 12px;
+            min-width: 36px;
+            min-height: 36px;
+            font-size: 17px;
+        }
+        .bharat-dialog switch {
+            background-color: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 999px;
+            min-width: 46px;
+            min-height: 24px;
+            color: transparent;
+        }
+        .bharat-dialog switch:checked {
+            background-image: linear-gradient(135deg, #6366f1, #8b5cf6);
+            border-color: #818cf8;
+            box-shadow: 0 0 10px rgba(99, 102, 241, 0.45);
+        }
+        .bharat-dialog switch slider {
+            background-color: #f8fafc;
+            background-image: none;
+            border: none;
+            border-radius: 999px;
+            min-width: 20px;
+            min-height: 20px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+        }
+        .bharat-dialog .settings-chip {
+            background-color: rgba(255, 255, 255, 0.07);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 999px;
+            color: #e2e8f0;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 10px;
+        }
+        .bharat-dialog .settings-chip-green {
+            background-color: rgba(34, 197, 94, 0.14);
+            border-color: rgba(34, 197, 94, 0.4);
+            color: #86efac;
+        }
+        .bharat-dialog .settings-chip-saffron {
+            background-color: rgba(255, 153, 51, 0.14);
+            border-color: rgba(255, 153, 51, 0.4);
+            color: #fdba74;
+        }
+        .bharat-dialog .settings-primary-btn, .settings-primary-btn {
+            background-image: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: #ffffff;
+            border: none;
+            border-radius: 999px;
+            padding: 8px 22px;
+            font-size: 12px;
+            font-weight: 700;
+            box-shadow: 0 3px 12px rgba(99, 102, 241, 0.4);
+        }
+        .bharat-dialog .settings-primary-btn:hover, .settings-primary-btn:hover {
+            background-image: linear-gradient(135deg, #7c7ff5, #a78bfa);
+            box-shadow: 0 5px 16px rgba(99, 102, 241, 0.55);
+        }
+        .bharat-dialog .settings-action-btn { border-radius: 10px; }
+        .bharat-dialog separator { background-color: rgba(255, 255, 255, 0.06); min-height: 1px; }
         """
         css_provider.load_from_data(css_data)
         Gtk.StyleContext.add_provider_for_screen(
@@ -2384,17 +2598,10 @@ class BharatBrowserWindow(Gtk.Window):
 
         self._load_failure_counts.pop(key, None)
         host = urllib.parse.urlparse(failing_uri).hostname or failing_uri
-        error_html = (
-            "<html><body style='background:#0b0e14;color:#f8fafc;"
-            "font-family:sans-serif;padding:40px;'>"
-            "<h2>⚠️ This page didn't load</h2>"
-            f"<p>Bharat Browser couldn't reach <b>{GLib.markup_escape_text(host)}</b>:</p>"
-            f"<p style='color:#94a3b8'>{GLib.markup_escape_text(error.message)}</p>"
-            "<p>Use the Reload button to try again.</p>"
-            "</body></html>"
-        )
+        offline = looks_offline(error.message)
+        error_html = build_error_page(host, failing_uri, error.message, offline)
         GLib.idle_add(lambda: webview.load_html(error_html, failing_uri))
-        self.statusbar.push(self.context_id, f"⚠️ Failed to load {host}")
+        self.statusbar.push(self.context_id, "📡 No internet connection" if offline else f"⚠️ Failed to load {host}")
         return True
 
     def on_key_press(self, widget, event):
@@ -2785,7 +2992,7 @@ class BharatBrowserWindow(Gtk.Window):
             req = urllib.request.Request(url, headers={"User-Agent": f"BharatBrowser/{self.current_version}"})
             with urllib.request.urlopen(req, timeout=6) as response:
                 if response.status != 200:
-                    GLib.idle_add(self.show_latest_version_notification)
+                    GLib.idle_add(self.push_notification_status, "⚠️ Couldn't check for updates right now")
                     return
                 data = json.loads(response.read(1 << 20).decode('utf-8'))
                 remote_version = data.get("version", "").strip()
@@ -2806,7 +3013,10 @@ class BharatBrowserWindow(Gtk.Window):
             GLib.idle_add(self.show_update_notification_dialog, remote_version, installed)
         except Exception as e:
             print("Git update check note:", e)
-            GLib.idle_add(self.show_latest_version_notification)
+            # Never claim "latest version" when the check itself failed.
+            msg = ("📡 No internet connection — couldn't check for updates"
+                   if looks_offline(str(e)) else "⚠️ Couldn't check for updates right now")
+            GLib.idle_add(self.push_notification_status, msg)
 
     def check_for_updates_interactive(self, status_lbl, btn_check, btn_restart):
         """User-triggered update check from Settings. Updates the status label,
@@ -2841,7 +3051,10 @@ class BharatBrowserWindow(Gtk.Window):
                     GLib.idle_add(_done, f"⬆️ Version v{remote_version} is available on GitHub (Install via package manager or git pull).", False, True)
                     GLib.idle_add(self.show_update_notification_dialog, remote_version, False)
             except Exception as e:
-                GLib.idle_add(_done, f"❌ Update check failed: {str(e)}", False, True)
+                if looks_offline(str(e)):
+                    GLib.idle_add(_done, "📡 No internet connection. Connect to the internet and try again.", False, True)
+                else:
+                    GLib.idle_add(_done, f"❌ Update check failed: {str(e)}", False, True)
 
         def _done(msg, show_restart, enable_btn):
             status_lbl.set_markup(f"<b>{GLib.markup_escape_text(msg)}</b>" if "✅" in msg or "🎉" in msg else GLib.markup_escape_text(msg))
@@ -3496,6 +3709,15 @@ class BharatBrowserWindow(Gtk.Window):
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         row.get_style_context().add_class("settings-row")
 
+        # "🛡️ Ad Blocking" -> round icon bubble on the left + "Ad Blocking" title.
+        icon_part, _, rest = title_text.partition(" ")
+        if rest and not icon_part.isascii():
+            bubble = Gtk.Label(label=icon_part)
+            bubble.get_style_context().add_class("settings-icon-bubble")
+            bubble.set_valign(Gtk.Align.CENTER)
+            row.pack_start(bubble, False, False, 0)
+            title_text = rest
+
         text_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         title_lbl = Gtk.Label(xalign=0.0)
         title_lbl.set_markup(f"<span weight='semibold'>{GLib.markup_escape_text(title_text)}</span>")
@@ -3511,11 +3733,11 @@ class BharatBrowserWindow(Gtk.Window):
 
         row.pack_start(text_vbox, True, True, 0)
 
-        chk = Gtk.CheckButton()
+        chk = Gtk.Switch()
         chk.set_active(bool(is_active))
         chk.set_valign(Gtk.Align.CENTER)
         if on_toggled_cb:
-            chk.connect("toggled", lambda cb: on_toggled_cb(cb.get_active()))
+            chk.connect("notify::active", lambda sw, _pspec: on_toggled_cb(sw.get_active()))
         row.pack_end(chk, False, False, 0)
         return row
 
@@ -3529,9 +3751,10 @@ class BharatBrowserWindow(Gtk.Window):
         )
         dialog.get_style_context().add_class("bharat-dialog")
         self.apply_dark_titlebar(dialog, title_text)
-        dialog.add_button("Close", Gtk.ResponseType.CLOSE)
+        close_btn = dialog.add_button("Close", Gtk.ResponseType.CLOSE)
+        close_btn.get_style_context().add_class("settings-primary-btn")
         dialog.set_default_response(Gtk.ResponseType.CLOSE)
-        dialog.set_default_size(580, 560)
+        dialog.set_default_size(620, 640)
 
         content_area = dialog.get_content_area()
         content_area.set_margin_start(16)
@@ -3541,6 +3764,29 @@ class BharatBrowserWindow(Gtk.Window):
 
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         content_area.pack_start(main_box, True, True, 0)
+
+        # Header banner: logo, title, tagline and a tricolour accent line.
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        logo_path = getattr(self, "icon_path", None)
+        if logo_path:
+            try:
+                logo_pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(logo_path, 52, 52, True)
+                header.pack_start(Gtk.Image.new_from_pixbuf(logo_pb), False, False, 0)
+            except Exception as e:
+                print("Settings logo note:", e)
+        header_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header_text.set_valign(Gtk.Align.CENTER)
+        lbl_title = Gtk.Label(label="Settings", xalign=0.0)
+        lbl_title.get_style_context().add_class("settings-title")
+        lbl_sub = Gtk.Label(label="Make Bharat Browser yours — fast, private, and proudly made in India", xalign=0.0)
+        lbl_sub.get_style_context().add_class("settings-subtitle")
+        header_text.pack_start(lbl_title, False, False, 0)
+        header_text.pack_start(lbl_sub, False, False, 0)
+        header.pack_start(header_text, True, True, 0)
+        main_box.pack_start(header, False, False, 0)
+        strip = Gtk.Box()
+        strip.get_style_context().add_class("tricolor-strip")
+        main_box.pack_start(strip, False, False, 0)
 
         # Tab navigation with Gtk.Stack and Gtk.StackSwitcher
         stack = Gtk.Stack()
@@ -3570,9 +3816,13 @@ class BharatBrowserWindow(Gtk.Window):
 
         search_card = self._create_setting_card("SEARCH ENGINE")
         search_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        search_bubble = Gtk.Label(label="🔍")
+        search_bubble.get_style_context().add_class("settings-icon-bubble")
+        search_bubble.set_valign(Gtk.Align.CENTER)
+        search_row.pack_start(search_bubble, False, False, 0)
         search_lbl_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         s_title = Gtk.Label(xalign=0.0)
-        s_title.set_markup("<span weight='semibold'>🔍 Default Search Engine</span>")
+        s_title.set_markup("<span weight='semibold'>Default Search Engine</span>")
         s_title.get_style_context().add_class("settings-row-title")
         search_lbl_box.pack_start(s_title, False, False, 0)
         s_hint = Gtk.Label(xalign=0.0)
@@ -3592,16 +3842,22 @@ class BharatBrowserWindow(Gtk.Window):
         gen_box.pack_start(search_card, False, False, 0)
 
         home_card = self._create_setting_card("HOMEPAGE & STARTUP")
+        home_head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        home_bubble = Gtk.Label(label="🏠")
+        home_bubble.get_style_context().add_class("settings-icon-bubble")
+        home_bubble.set_valign(Gtk.Align.CENTER)
+        home_head.pack_start(home_bubble, False, False, 0)
         home_lbl_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         h_title = Gtk.Label(xalign=0.0)
-        h_title.set_markup("<span weight='semibold'>🏠 Custom Homepage</span>")
+        h_title.set_markup("<span weight='semibold'>Custom Homepage</span>")
         h_title.get_style_context().add_class("settings-row-title")
         home_lbl_box.pack_start(h_title, False, False, 0)
         h_hint = Gtk.Label(xalign=0.0)
         h_hint.set_markup("<small>Loaded on new tabs (Ctrl+T) and initial startup.</small>")
         h_hint.get_style_context().add_class("settings-hint-label")
         home_lbl_box.pack_start(h_hint, False, False, 0)
-        home_card.pack_start(home_lbl_box, False, False, 0)
+        home_head.pack_start(home_lbl_box, True, True, 0)
+        home_card.pack_start(home_head, False, False, 0)
 
         home_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         home_entry = Gtk.Entry()
@@ -3611,7 +3867,7 @@ class BharatBrowserWindow(Gtk.Window):
         home_box.pack_start(home_entry, True, True, 0)
 
         btn_set_home = Gtk.Button(label="Set")
-        btn_set_home.get_style_context().add_class("settings-action-btn")
+        btn_set_home.get_style_context().add_class("settings-primary-btn")
         btn_set_home.set_tooltip_text("Save this address as your homepage")
         home_box.pack_start(btn_set_home, False, False, 0)
 
@@ -3799,11 +4055,24 @@ class BharatBrowserWindow(Gtk.Window):
         about_lbl.get_style_context().add_class("settings-hint-label")
         about_card.pack_start(about_lbl, False, False, 0)
 
+        chips = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        for chip_text, chip_class in (
+            (f"v{self.current_version}", None),
+            ("🔐 Signed updates", "settings-chip-green"),
+            ("Made in India", "settings-chip-saffron"),
+        ):
+            chip = Gtk.Label(label=chip_text)
+            chip.get_style_context().add_class("settings-chip")
+            if chip_class:
+                chip.get_style_context().add_class(chip_class)
+            chips.pack_start(chip, False, False, 0)
+        about_card.pack_start(chips, False, False, 2)
+
         about_card.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 2)
 
         update_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         btn_check_update = Gtk.Button(label="🔄 Check for Updates on GitHub")
-        btn_check_update.get_style_context().add_class("settings-action-btn")
+        btn_check_update.get_style_context().add_class("settings-primary-btn")
         update_vbox.pack_start(btn_check_update, False, False, 0)
 
         update_status_lbl = Gtk.Label(xalign=0.0)
@@ -3812,7 +4081,7 @@ class BharatBrowserWindow(Gtk.Window):
         update_vbox.pack_start(update_status_lbl, False, False, 0)
 
         btn_restart_applied = Gtk.Button(label="🚀 Restart Now to Apply Update")
-        btn_restart_applied.get_style_context().add_class("settings-action-btn")
+        btn_restart_applied.get_style_context().add_class("settings-primary-btn")
         btn_restart_applied.set_no_show_all(True)
         btn_restart_applied.hide()
         btn_restart_applied.connect("clicked", lambda b: (dialog.destroy(), self.restart_application()))

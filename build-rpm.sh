@@ -8,7 +8,7 @@ cd "$SCRIPT_DIR"
 # Refresh the updater checksum in package.json before packaging
 bash tools/update-checksum.sh
 
-VERSION="1.3.6"
+VERSION="1.3.7"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -55,6 +55,8 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.3.7-1
+- New friendly offline page (clear message, auto-reload when back online, kite mini-game); update check no longer claims 'latest version' when offline; redesigned Settings with banner, icon bubbles, switches and chips; README screenshots
 * Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.3.6-1
 - Auto-updater now requires a valid Ed25519 signature on every release (verified against a public key built into the app) before installing
 * Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.3.5-1

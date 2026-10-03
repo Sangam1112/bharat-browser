@@ -14,7 +14,7 @@ cd "$SCRIPT_DIR"
 # Refresh the updater checksum in package.json before packaging
 bash tools/update-checksum.sh
 
-VERSION="1.3.6"
+VERSION="1.3.7"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/deb_build_${PKG_NAME}"
