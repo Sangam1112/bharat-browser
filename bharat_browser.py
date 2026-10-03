@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.3.4 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.3.5 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -8,7 +8,7 @@ import os
 import json
 import shutil
 
-APP_VERSION = "1.3.4"
+APP_VERSION = "1.3.5"
 # The self-updater cannot rewrite a root-owned package install, so it keeps its updates in a per-user copy
 # that the launcher (/usr/bin/bharat-browser) prefers over the system one.
 USER_INSTALL_DIR = os.path.expanduser("~/.local/share/bharat-browser")
@@ -302,6 +302,16 @@ HISTORY_FILE = os.path.join(CONFIG_DIR, "history.json")
 HISTORY_MAX_ENTRIES = 500
 BOOKMARKS_FILE = os.path.join(CONFIG_DIR, "bookmarks.json")
 BOOKMARKS_MAX_ENTRIES = 5000
+
+# Chrome-compatible UA so sites don't serve "unsupported browser" pages or flag
+# an outdated client as a bot. Chrome freezes everything after the major
+# version to ".0.0.0", so only CHROME_UA_MAJOR needs bumping. Update it each
+# release to the current stable major (Chrome 154 as of Oct 2026).
+CHROME_UA_MAJOR = 154
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    f"Chrome/{CHROME_UA_MAJOR}.0.0.0 Safari/537.36"
+)
 
 SEARCH_ENGINES = {
     "Google": "https://www.google.com/search?q={query}",
@@ -864,7 +874,7 @@ class BharatBrowserWindow(Gtk.Window):
             self.web_settings.set_enable_smooth_scrolling(True)
         self.web_settings.set_enable_html5_database(True)
         self.web_settings.set_enable_html5_local_storage(True)
-        self.web_settings.set_user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+        self.web_settings.set_user_agent(USER_AGENT)
 
         # Main Overlay
         self.overlay = Gtk.Overlay()
