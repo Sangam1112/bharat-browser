@@ -48,7 +48,9 @@ def main():
     py = py.replace(f'APP_VERSION = "{old}"', f'APP_VERSION = "{new}"', 1)
     write("bharat_browser.py", py)
 
-    write("README.md", read("README.md").replace(old, new))
+    # Only the install commands carry a version; a blanket replace would also rewrite
+    # true historical statements such as "supported since 1.4.2".
+    write("README.md", re.sub(rf"^VERSION={re.escape(old)}$", f"VERSION={new}", read("README.md"), flags=re.M))
 
     now = datetime.datetime.now()
     rpm = read("build-rpm.sh")

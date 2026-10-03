@@ -6,13 +6,13 @@
 
 <p><b>A tiny, fast, privacy-first web browser for Linux.<br>Built on WebKitGTK. Made in India.</b></p>
 
-[![Version](https://img.shields.io/badge/version-1.4.2-blue.svg)](https://github.com/Sangam1112/bharat-browser/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/Sangam1112/bharat-browser?label=release&color=blue)](https://github.com/Sangam1112/bharat-browser/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Ubuntu%20%7C%20Debian%20%7C%20Fedora%20%7C%20RHEL%20family%20%7C%20WSL2-orange.svg)](#-install)
 [![Installer](https://img.shields.io/badge/installer-~100%20KB-brightgreen.svg)](#-small-by-design)
 [![Updates](https://img.shields.io/badge/updates-signed%20(Ed25519)-6366f1.svg)](#-keeping-it-up-to-date)
 
-[**Features**](#-features) · [**Screenshots**](#-screenshots) · [**Install**](#-install) · [**Update**](#-keeping-it-up-to-date) · [**Shortcuts**](#-keyboard-shortcuts) · [**Privacy**](#-privacy--what-it-connects-to) · [**Develop**](#-development)
+[**Highlights**](#-highlights) · [**Screenshots**](#-screenshots) · [**Install**](#-install) · [**Update**](#-keeping-it-up-to-date) · [**Shortcuts**](#-keyboard-shortcuts) · [**Privacy**](#-privacy--what-it-connects-to) · [**Develop**](#-development)
 
 <br>
 
@@ -26,10 +26,10 @@
 
 <table>
   <tr>
-    <td width="25%" valign="top"><h3>🪶 Tiny</h3>A ~100 KB installer. It uses the WebKitGTK engine already on your system instead of shipping its own 150 MB copy.</td>
-    <td width="25%" valign="top"><h3>🛡️ Private</h3>Ad and tracker blocking, tracking-parameter stripping, HTTPS upgrades and third-party cookie blocking are on from the first launch.</td>
-    <td width="25%" valign="top"><h3>⚡ Light</h3>Sleeps unused tabs, trims its own cache, uses your GPU and recovers crashed tabs, so it stays comfortable on older PCs.</td>
-    <td width="25%" valign="top"><h3>🔐 Trustworthy</h3>Updates are cryptographically signed, passwords live in your system keyring, and there is no telemetry of any kind.</td>
+    <td width="25%" valign="top"><h3>🪶 Tiny</h3>A ~100 KB installer. It uses the WebKitGTK already on your system instead of shipping its own 150 MB engine.</td>
+    <td width="25%" valign="top"><h3>🛡️ Private</h3>Tracker blocking, HTTPS upgrades and cookie protection work from the very first launch.</td>
+    <td width="25%" valign="top"><h3>⚡ Light</h3>Built to stay comfortable on older PCs: it sleeps unused tabs and trims its own memory.</td>
+    <td width="25%" valign="top"><h3>🔐 Trustworthy</h3>Signed updates, passwords in your system keyring, and no telemetry at all.</td>
   </tr>
 </table>
 
@@ -37,34 +37,25 @@ It is a native GTK3 desktop app, not a repackaged Chromium or Electron. The ad b
 
 ---
 
-## ✨ Features
+## ✨ Highlights
 
-### 🛡️ Privacy & security
-- **Ad & tracker blocking** with a built-in list plus an optional **weekly EasyPrivacy update** (whole-domain, third-party rules only, with a never-block list so sign-in and captcha services keep working).
-- **Tracking-parameter stripping** (`utm_*`, `fbclid`, `gclid` and friends) and **automatic HTTPS upgrades**.
-- **HTTPS-only warning**: if a site can't be reached securely you get a clear page and a deliberate "continue over HTTP" choice, never a silent downgrade.
-- **Third-party cookie blocking** and WebKit's Intelligent Tracking Prevention. **Fingerprint protection** nudges canvas readback, hides your real GPU/WebGL renderer and reports generic CPU/memory values. WebRTC is off by default so it can't leak your IP.
-- **Per-site controls** (click the 🔒): ads, JavaScript, remembered zoom, and camera/location/notification permissions, site by site.
-- **Privacy report**: click the shield to see what was stopped.
-- **Password saving in your system keyring** (GNOME Keyring, KWallet or KeePassXC). Nothing is stored in the browser's own files, nothing fills without your click, and private windows never save.
-- **Private windows** keep history, bookmarks, cookies, passwords and site settings out of storage entirely.
+**🛡️ Privacy you don't have to configure**
+- **Blocks trackers and ads out of the box**, refreshed weekly from EasyPrivacy, with a safety list so sign-in pages and captchas keep working.
+- **HTTPS-only warning**: if a site can't be reached securely, *you* decide whether to continue over HTTP. There is no silent downgrade.
+- **Per-site controls** from the 🔒 icon: ads, JavaScript, zoom and camera/location/notification permissions, remembered site by site.
+- **Passwords stay in your system keyring** (GNOME Keyring, KWallet or KeePassXC), never in the browser's own files, and only fill when you click.
+- **Leak and fingerprint protection**: third-party cookies blocked, WebRTC off by default (so it can't expose your IP), and your real GPU details hidden from websites.
+- **Privacy report** to see what was stopped, and **private windows** that write nothing to disk.
 
-### 🌐 Browsing
-- **Tabs that behave**: pin tabs (they survive restarts), right-click menu, middle-click to close, reopen the last closed tab, automatic recovery after a renderer crash.
-- **Reader mode** for distraction-free articles, with text size and themes.
-- **Dark mode on any site**, **find in page**, an address bar that autocompletes from your history, and a **history dashboard** ranked by time spent.
-- **Bookmarks** with a manager, and **import from Firefox, Chrome, Chromium, Brave, Edge, Vivaldi, Opera** or an exported `.html`.
-- **Downloads manager**, in-tab **PDF viewing**, **screenshots**, **printing / save as PDF**, a **developer inspector** (F12) and optional **spell check**.
-- A friendly **offline page** that reloads itself when you're back online (with a kite game while you wait 🪁).
+**🧭 Everyday touches**
+- **Reader mode** (`Ctrl+Alt+R`): any article as a clean page with adjustable text size and themes.
+- **Pinned tabs** that survive restarts, plus a one-key way to reopen a closed tab.
+- **Switch in a minute**: import bookmarks and history from Firefox, Chrome, Brave, Edge, Vivaldi, Opera and more.
+- **A friendly offline page** that reloads itself when you're back online, with a kite game while you wait 🪁.
 
-### ⚡ Performance
-- **Background tab suspension**: tabs idle for 15+ minutes are unloaded and restored instantly, exactly as you left them. Never touches the active tab or one playing audio.
-- **Low Memory Mode**, **GPU acceleration** toggle, link/DNS prefetch and smooth scrolling.
-- Friendly "this tab ran out of memory" and "keeps crashing" pages instead of a blank tab.
-
-### 🧰 Housekeeping
-- **Signed, self-updating**: in-app updates are verified with an Ed25519 signature before anything is installed.
-- Redesigned **Settings** with toggles, a built-in password manager and a site-settings manager.
+**🪶 Light on your computer**
+- **Sleeps tabs you aren't using** and has a Low Memory Mode, so older PCs stay responsive.
+- **Signed self-updates** (Ed25519): a release that isn't signed by the project key is never installed.
 
 ---
 
