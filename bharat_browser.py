@@ -162,15 +162,39 @@ def _host_matches_domain_set(host, domain_set):
 
 def is_ad_or_tracker(url_str):
     try:
-        parsed = urllib.parse.urlparse(url_str)
-        host = (parsed.hostname or '').lower()
+        if url_str.startswith("https://"):
+            rest = url_str[8:]
+        elif url_str.startswith("http://"):
+            rest = url_str[7:]
+        else:
+            parsed = urllib.parse.urlparse(url_str)
+            host = (parsed.hostname or '').lower()
+            path = parsed.path
+            rest = None
+
+        if rest is not None:
+            slash_idx = rest.find('/')
+            q_idx = rest.find('?')
+            if slash_idx != -1 and (q_idx == -1 or slash_idx < q_idx):
+                host = rest[:slash_idx]
+                path = rest[slash_idx:q_idx] if q_idx != -1 else rest[slash_idx:]
+            elif q_idx != -1:
+                host = rest[:q_idx]
+                path = ""
+            else:
+                host = rest
+                path = ""
+            if ':' in host:
+                host = host.split(':', 1)[0]
+            host = host.lower()
+
         if not host:
             return False
 
         # Exempt YouTube / GoogleVideo streaming domains and manifest files from cancellation
         if _host_matches_domain_set(host, STREAMING_EXEMPT_DOMAINS):
             return False
-        if parsed.path.lower().endswith(STREAMING_EXEMPT_EXTENSIONS):
+        if path.lower().endswith(STREAMING_EXEMPT_EXTENSIONS):
             return False
 
         if ADBLOCK_ENGINE is not None:
@@ -188,7 +212,7 @@ def is_ad_or_tracker(url_str):
             return True
 
         # Stage 2: Path Regex Matching
-        if BLOCKED_REGEX.search(parsed.path):
+        if path and BLOCKED_REGEX.search(path):
             return True
     except Exception:
         pass
