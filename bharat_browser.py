@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.3.1 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.3.2 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
 import os
 import json
+import shutil
 
 # CONFIG_DIR/CONFIG_FILE are also used later (load_persistent_settings() and
 # friends) — defined here first because Low Memory Mode's single-process
@@ -148,9 +149,16 @@ def is_local_network_host(host):
     return '.' not in host
 
 def _host_matches_domain_set(host, domain_set):
+    if not host:
+        return False
     if host in domain_set:
         return True
-    return any(host.endswith('.' + dom) for dom in domain_set)
+    parts = host.split('.')
+    for i in range(1, len(parts)):
+        parent = '.'.join(parts[i:])
+        if parent in domain_set:
+            return True
+    return False
 
 def is_ad_or_tracker(url_str):
     try:
@@ -175,18 +183,9 @@ def is_ad_or_tracker(url_str):
         # dependency isn't installed, or it raised above: a plain-Python
         # fallback over the same BLOCKED_DOMAINS/BLOCKED_REGEX data, not a
         # second, independent blocking tier.
-        # Stage 1: O(1) Domain Set Pre-lookup
-        if host in BLOCKED_DOMAINS:
+        # Stage 1: O(1) Hierarchical Domain Set Pre-lookup
+        if _host_matches_domain_set(host, BLOCKED_DOMAINS):
             return True
-        parts = host.rsplit('.', 2)
-        if len(parts) >= 2:
-            root_domain = parts[-2] + '.' + parts[-1]
-            if root_domain in BLOCKED_DOMAINS:
-                return True
-        if len(parts) >= 3:
-            sub_domain = parts[-3] + '.' + parts[-2] + '.' + parts[-1]
-            if sub_domain in BLOCKED_DOMAINS:
-                return True
 
         # Stage 2: Path Regex Matching
         if BLOCKED_REGEX.search(parsed.path):
@@ -619,7 +618,7 @@ class BharatBrowserWindow(Gtk.Window):
     _global_css_loaded = False
 
     def __init__(self, private=False):
-        self.current_version = "1.3.1"
+        self.current_version = "1.3.2"
         self.is_private = private
         title_suffix = " (Private)" if private else ""
         super().__init__(title=f"Bharat Browser v{self.current_version}{title_suffix}")
@@ -628,6 +627,10 @@ class BharatBrowserWindow(Gtk.Window):
         _LIVE_WINDOW_COUNT += 1
         self.set_default_size(1280, 850)
         self.set_position(Gtk.WindowPosition.CENTER)
+
+        # Prune stale Chromium-engine cache remnants
+        if not self.is_private:
+            self._cleanup_stale_chromium_artifacts()
 
         # Slim custom titlebar (replaces the OS-drawn titlebar, which reserved
         # a large light-themed strip for the page title and ate vertical space)
@@ -657,6 +660,7 @@ class BharatBrowserWindow(Gtk.Window):
                     print("Icon load note:", e)
 
         self.blocked_count = 0
+        self._shield_badge_update_scheduled = False
         self.downloads_history = []
         self._crash_counts = {}
         self._load_failure_counts = {}
@@ -1112,6 +1116,30 @@ class BharatBrowserWindow(Gtk.Window):
         except Exception as e:
             print("Memory monitor note:", e)
 
+    def _cleanup_stale_chromium_artifacts(self):
+        stale_dirs = [
+            "GPUCache", "DawnWebGPUCache", "DawnGraphiteCache",
+            "Shared Dictionary", "Code Cache", "Crashpad",
+            "Trust Tokens", "WebStorage", "blob_storage", "DIPS"
+        ]
+        for d in stale_dirs:
+            target = os.path.join(CONFIG_DIR, d)
+            if os.path.isdir(target):
+                try:
+                    shutil.rmtree(target, ignore_errors=True)
+                except Exception:
+                    pass
+        try:
+            for item in os.listdir(CONFIG_DIR):
+                if item.startswith(".org.chromium"):
+                    target = os.path.join(CONFIG_DIR, item)
+                    try:
+                        os.remove(target)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
     def _detect_gpu_info_async(self):
         self.gpu_info_label = detect_gpu_info()
 
@@ -1552,23 +1580,24 @@ class BharatBrowserWindow(Gtk.Window):
             self._set_dark_stylesheet(ucm, True)
 
         # Signals
-        webview.connect("load-changed", self.on_load_changed)
-        webview.connect("mouse-target-changed", self.on_mouse_target_changed)
-        webview.connect("notify::title", self.on_webview_title_notify)
-        webview.connect("resource-load-started", self.on_resource_load_started)
-        webview.connect("web-process-terminated", self.on_web_process_terminated)
-        webview.connect("permission-request", self.on_permission_request)
-        webview.connect("load-failed-with-tls-errors", self.on_load_failed_with_tls_errors)
-        webview.connect("load-failed", self.on_load_failed)
+        sig_ids = []
+        sig_ids.append((webview, webview.connect("load-changed", self.on_load_changed)))
+        sig_ids.append((webview, webview.connect("mouse-target-changed", self.on_mouse_target_changed)))
+        sig_ids.append((webview, webview.connect("notify::title", self.on_webview_title_notify)))
+        sig_ids.append((webview, webview.connect("resource-load-started", self.on_resource_load_started)))
+        sig_ids.append((webview, webview.connect("web-process-terminated", self.on_web_process_terminated)))
+        sig_ids.append((webview, webview.connect("permission-request", self.on_permission_request)))
+        sig_ids.append((webview, webview.connect("load-failed-with-tls-errors", self.on_load_failed_with_tls_errors)))
+        sig_ids.append((webview, webview.connect("load-failed", self.on_load_failed)))
         # Files WebKit can't render inline (Office docs, zip archives, etc.)
         # would otherwise just interrupt the frame load and surface as a
         # confusing "page didn't load" error; convert them into a normal
         # download instead, same as clicking a download link would do.
-        webview.connect("decide-policy", self.on_decide_policy)
+        sig_ids.append((webview, webview.connect("decide-policy", self.on_decide_policy)))
         # Without this, WebKit silently drops any navigation that wants a new
         # window/tab (target="_blank", window.open(), middle-click, OAuth
         # popups, etc.) instead of doing anything visible.
-        webview.connect("create", self.on_create_webview)
+        sig_ids.append((webview, webview.connect("create", self.on_create_webview)))
 
         # Ctrl+scroll to zoom. A Gtk.EventControllerScroll attached directly
         # to the webview (tried in a prior version, both CAPTURE and BUBBLE
@@ -1579,11 +1608,12 @@ class BharatBrowserWindow(Gtk.Window):
         # that problem: returning False lets the event continue on to
         # WebKit's normal handling exactly like any unhandled GTK signal.
         webview.add_events(Gdk.EventMask.SCROLL_MASK | Gdk.EventMask.SMOOTH_SCROLL_MASK)
-        webview.connect("scroll-event", self.on_webview_scroll)
+        sig_ids.append((webview, webview.connect("scroll-event", self.on_webview_scroll)))
 
         find_controller = webview.get_find_controller()
-        find_controller.connect("found-text", self.on_find_found_text, webview)
-        find_controller.connect("failed-to-find-text", self.on_find_failed_text, webview)
+        sig_ids.append((find_controller, find_controller.connect("found-text", self.on_find_found_text, webview)))
+        sig_ids.append((find_controller, find_controller.connect("failed-to-find-text", self.on_find_failed_text, webview)))
+        webview._bharat_sig_ids = sig_ids
 
         tab_box.pack_start(webview, True, True, 0)
         tab_box.show_all()
@@ -1690,17 +1720,52 @@ class BharatBrowserWindow(Gtk.Window):
             Gtk.main_quit()
 
     def close_tab(self, tab_box):
-        if hasattr(tab_box, '_bharat_webview'):
-            self._crash_counts.pop(id(tab_box._bharat_webview), None)
-            self._load_failure_counts.pop(id(tab_box._bharat_webview), None)
-            self._flush_page_view(tab_box._bharat_webview)
+        webview = getattr(tab_box, '_bharat_webview', None)
+        if webview is not None:
+            self._crash_counts.pop(id(webview), None)
+            self._load_failure_counts.pop(id(webview), None)
+            self._flush_page_view(webview)
+            if hasattr(self, '_page_view_start'):
+                self._page_view_start.pop(id(webview), None)
+
+            # Disconnect all attached signal handlers to avoid retaining references
+            sig_ids = getattr(webview, '_bharat_sig_ids', [])
+            for obj, sig_id in sig_ids:
+                try:
+                    if hasattr(obj, 'is_connected') and obj.is_connected(sig_id):
+                        obj.disconnect(sig_id)
+                except Exception:
+                    pass
+            webview._bharat_sig_ids = []
+
+            # Stop loading and destroy webview
+            try:
+                webview.stop_loading()
+            except Exception:
+                pass
+
+            try:
+                webview.destroy()
+            except Exception:
+                pass
+
+        if getattr(self, '_current_active_tab_box', None) == tab_box:
+            self._current_active_tab_box = None
+
         self._tab_last_active.pop(id(tab_box), None)
         self._suspended_session_states.pop(id(tab_box), None)
         self._suspended_tab_titles.pop(id(tab_box), None)
         self._suspended_tab_uris.pop(id(tab_box), None)
+
         page_num = self.notebook.page_num(tab_box)
         if page_num != -1:
             self.notebook.remove_page(page_num)
+
+        try:
+            tab_box.destroy()
+        except Exception:
+            pass
+
         if self.notebook.get_n_pages() == 0:
             self.create_new_tab(self.homepage)
 
@@ -2646,13 +2711,20 @@ class BharatBrowserWindow(Gtk.Window):
 
         if self.adblock_enabled and is_ad_or_tracker(uri):
             self.blocked_count += 1
-            GLib.idle_add(self.update_shield_badge)
+            if not getattr(self, '_shield_badge_update_scheduled', False):
+                self._shield_badge_update_scheduled = True
+                GLib.timeout_add(250, self._flush_shield_badge_update)
             if ".js" in uri or "script" in uri:
                 request.set_uri("data:application/javascript,")
             elif ".json" in uri:
                 request.set_uri("data:application/json,{}")
             else:
                 request.set_uri("data:text/plain,")
+
+    def _flush_shield_badge_update(self):
+        self._shield_badge_update_scheduled = False
+        self.update_shield_badge()
+        return False
 
     def update_shield_badge(self):
         self.btn_shield.set_label(f"🛡️ {self.blocked_count}")

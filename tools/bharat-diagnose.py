@@ -23,6 +23,11 @@ Usage:
     python3 tools/bharat-diagnose.py --duration 900     # stop after 15 min
     python3 tools/bharat-diagnose.py --snapshot         # ~10s quick check
     python3 tools/bharat-diagnose.py --output-dir out/  # where report.md / samples.csv go
+    python3 tools/bharat-diagnose.py --watch --notify   # diagnose EVERY browser session, forever
+
+Watch mode waits (cheaply) for the browser to start, records the session until
+it exits, writes one JSON log per session to <project>/logs/, then waits for the next launch. Run it
+at login with tools/diagnose-service.sh install.
 
 Leak detection needs a run of at least 5 minutes; shorter runs say so instead
 of guessing. Use the browser normally (or reproduce the problem) while it runs.
@@ -34,6 +39,7 @@ import json
 import math
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -47,6 +53,9 @@ MIN_TREND_SECONDS = 300          # shortest run that can say anything about grow
 MEM_GROWTH_MB_PER_MIN = 5.0      # sustained growth that is flagged
 STALE_DAYS = 30
 CONFIG_BIG_MB = 300
+MAX_STORED_SAMPLES = 2000        # long sessions are thinned so memory stays bounded
+DEFAULT_WATCH_DIR = os.path.join(os.path.dirname(HERE), "logs")   # <project>/logs
+SESSION_RE = re.compile(r"^session-\d{8}-\d{6}\.json$")
 SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "INFO": 3}
 
 
@@ -135,21 +144,43 @@ class Run:
         self.samples = []      # [{"t", "procs": [...], "sys": {...}}]
         self.events = []       # [{"t", "kind", "pid", "role"}]
         self.main_exited = False
-        self.first_web_process_delay = None  # seconds from main start to first WebProcess
+
+
+class SampleStore:
+    """Keeps at most `cap` samples by halving resolution when full, so a browser left open for
+    days costs the same memory as one open for an hour. Events are never thinned."""
+
+    def __init__(self, cap=MAX_STORED_SAMPLES):
+        self.cap, self.items, self.stride, self._n = cap, [], 1, 0
+
+    def add(self, item):
+        if self._n % self.stride == 0:
+            self.items.append(item)
+            if len(self.items) > self.cap:
+                self.items = self.items[::2]
+                self.stride *= 2
+        self._n += 1
+
+
+STOP = {"flag": False}
+
+
+def install_signal_handlers():
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: STOP.update(flag=True))
 
 
 def collect(monitor, interval, duration, wait_for_browser, quiet=False):
-    run = Run()
-    stop = {"flag": False}
-    signal.signal(signal.SIGINT, lambda *_: stop.update(flag=True))
-
+    """Samples the browser until it exits, `duration` elapses, or STOP is set."""
+    run, store = Run(), SampleStore()
     start = time.time()
-    known = {}          # pid -> role, from the previous sample
+    known = {}          # pid -> role, from the previous tick
     prev_cpu = {}       # pid -> (ticks, wall)
     seen_any = False
+    first_tick = True
     waited_from = time.time()
 
-    while not stop["flag"]:
+    while not STOP["flag"]:
         tick = time.time()
         pids = monitor.find_browser_pids()
         if not pids:
@@ -165,40 +196,49 @@ def collect(monitor, interval, duration, wait_for_browser, quiet=False):
         if not seen_any:
             start = tick
         seen_any = True
-        now = tick
         procs = []
         for pid, role in pids.items():
-            s = sample_process(pid, role)
-            if s is None:
+            sp = sample_process(pid, role)
+            if sp is None:
                 continue
             cpu = 0.0
             if pid in prev_cpu:
-                dt = now - prev_cpu[pid][1]
+                dt = tick - prev_cpu[pid][1]
                 if dt > 0:
-                    cpu = (s["cpu_ticks"] - prev_cpu[pid][0]) / CLOCK_TICKS / dt * 100.0
-            prev_cpu[pid] = (s["cpu_ticks"], now)
-            s["cpu"] = cpu
-            procs.append(s)
+                    cpu = (sp["cpu_ticks"] - prev_cpu[pid][0]) / CLOCK_TICKS / dt * 100.0
+            prev_cpu[pid] = (sp["cpu_ticks"], tick)
+            sp["cpu"] = cpu
+            procs.append(sp)
 
-        t = now - start
+        t = tick - start
         current = {p["pid"]: p["role"] for p in procs}
-        if run.samples:   # lifecycle events only after the first sample
+        if not first_tick:   # lifecycle events are tracked every tick, even ones thinned out of storage
             for pid, role in current.items():
                 if pid not in known:
                     run.events.append({"t": t, "kind": "spawn", "pid": pid, "role": role})
             for pid, role in known.items():
                 if pid not in current:
                     run.events.append({"t": t, "kind": "exit", "pid": pid, "role": role})
+        first_tick = False
         known = current
+        prev_cpu = {pid: v for pid, v in prev_cpu.items() if pid in current}
 
-        run.samples.append({"t": t, "procs": procs, "sys": sample_system()})
+        sample = {"t": t, "procs": procs, "sys": sample_system()}
+        store.add(sample)
         if not quiet:
-            _live_line(run.samples[-1])
+            _live_line(sample)
 
         if duration and t >= duration:
             break
-        time.sleep(max(0.0, interval - (time.time() - tick)))
+        _interruptible_sleep(max(0.0, interval - (time.time() - tick)))
+    run.samples = store.items
     return run
+
+
+def _interruptible_sleep(seconds):
+    end = time.time() + seconds
+    while not STOP["flag"] and time.time() < end:
+        time.sleep(min(0.5, max(0.0, end - time.time())))
 
 
 def total_mem_kb(sample):
@@ -243,8 +283,9 @@ def finding(severity, title, evidence, suggestion):
     return {"severity": severity, "title": title, "evidence": evidence, "suggestion": suggestion}
 
 
-def analyze_run(run):
-    """Findings derived from the sampled behaviour."""
+def analyze_run(run, exit_crash_lines=None):
+    """Findings derived from the sampled behaviour. `exit_crash_lines`: journal evidence of a crash
+    around the time the browser exited (None/empty = no evidence, treated as a normal quit)."""
     out = []
     samples = run.samples
     if not samples:
@@ -292,11 +333,14 @@ def analyze_run(run):
 
     # --- lifecycle churn -----------------------------------------------------
     web_exits = [e for e in run.events if e["kind"] == "exit" and e["role"] == "web_process"]
-    if run.main_exited:
-        out.append(finding("HIGH", "Browser exited during monitoring",
-                           "The main process disappeared while being observed (crash or normal quit).",
-                           "If you did not quit it: check `journalctl --user -n 200` for the traceback, and the 'Recent crash "
-                           "lines' section below."))
+    if run.main_exited and exit_crash_lines:
+        out.append(finding("HIGH", "Browser exited unexpectedly",
+                           "Crash-like journal lines appeared around the time it exited: " + " | ".join(exit_crash_lines[-3:]),
+                           "Match the timestamp with what you were doing; see 'Recent crash lines' for more."))
+    elif run.main_exited:
+        out.append(finding("INFO", "Browser session ended",
+                           "The main process exited. No crash evidence in the journal, so this looks like a normal quit "
+                           "(a hard kill leaves no trace, so a crash cannot be fully ruled out).", ""))
     if len(web_exits) >= 3:
         out.append(finding(
             "MEDIUM", "WebKit renderer processes exited repeatedly",
@@ -471,11 +515,11 @@ APP_RE = re.compile(r"(bharat|WebKit)", re.I)
 URL_RE = re.compile(r"https?://\S+")
 
 
-def recent_crash_lines(limit=8):
+def recent_crash_lines(limit=8, since="24 hours ago"):
     """Crash-looking journal lines about the browser (last 24h), with URLs redacted. Best effort."""
     try:
         res = subprocess.run(
-            ["journalctl", "--user", "--since", "24 hours ago", "--no-pager", "-o", "cat", "-n", "3000"],
+            ["journalctl", "--user", "--since", since, "--no-pager", "-o", "cat", "-n", "3000"],
             capture_output=True, text=True, timeout=8)
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -553,6 +597,155 @@ def load_settings():
         return {}
 
 
+def role_summary(run):
+    out = {}
+    for role in sorted({p["role"] for s in run.samples for p in s["procs"]}):
+        counts = [sum(1 for p in s["procs"] if p["role"] == role) for s in run.samples]
+        mems = [sum((p["pss_kb"] if p["pss_kb"] is not None else p["rss_kb"]) for p in s["procs"] if p["role"] == role) / 1024
+                for s in run.samples]
+        cpus = [sum(p["cpu"] for p in s["procs"] if p["role"] == role) for s in run.samples[1:]] or [0.0]
+        out[role] = {"peak_count": max(counts), "peak_memory_mb": round(max(mems), 1), "avg_cpu_percent": round(sum(cpus) / len(cpus), 1)}
+    return out
+
+
+def session_to_json(run, findings, env, config_entries, crash_lines, settings, started_at):
+    """One self-contained, JSON-serializable log of a session. No page, URL or history data."""
+    samples = []
+    for s in run.samples:
+        samples.append({
+            "t": round(s["t"], 1),
+            "system": s["sys"],
+            "processes": [{
+                "pid": p["pid"], "role": p["role"], "rss_mb": round(p["rss_kb"] / 1024, 1),
+                "pss_mb": None if p["pss_kb"] is None else round(p["pss_kb"] / 1024, 1),
+                "swap_mb": round(p["swap_kb"] / 1024, 1), "threads": p["threads"], "fds": p["fds"],
+                "cpu_percent": round(p["cpu"], 1), "read_mb": p["read_kb"] and round(p["read_kb"] / 1024, 1),
+                "write_mb": p["write_kb"] and round(p["write_kb"] / 1024, 1)} for p in s["procs"]]})
+    duration = run.samples[-1]["t"] if run.samples else 0.0
+    ordered = sorted(findings, key=lambda f: SEVERITY_ORDER[f["severity"]])
+    return {
+        "schema": 1,
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(started_at)),
+        "duration_s": round(duration, 1),
+        "browser_exited": run.main_exited,
+        "summary": {
+            "samples_stored": len(samples),
+            "peak_memory_mb": round(max((total_mem_kb(s) for s in run.samples), default=0) / 1024, 1),
+            "issues": {sev: sum(1 for f in findings if f["severity"] == sev) for sev in ("HIGH", "MEDIUM", "LOW")},
+            "roles": role_summary(run)},
+        "findings": ordered,
+        "environment": env,
+        "settings": {k: v for k, v in (settings or {}).items() if k not in ("homepage", "download_dir", "search_engine")},
+        "data_directory_mb": {e["name"]: round(e["mb"], 1) for e in config_entries[:15]},
+        "crash_lines_24h": crash_lines or [],
+        "events": run.events,
+        "samples": samples}
+
+
+def finish_session(run, out_dir=None, notify=False, json_path=None, started_at=None):
+    """Analyze one run. Writes report.md + samples.csv into `out_dir` and/or a JSON log to `json_path`.
+    Returns the findings."""
+    settings = load_settings()
+    env = read_environment(settings)
+    config_entries = scan_config_dir()
+    peak_webs = max((sum(1 for p in s["procs"] if p["role"] == "web_process") for s in run.samples), default=0)
+    exit_lines = recent_crash_lines(since="3 minutes ago") if run.main_exited else None
+    findings = analyze_run(run, exit_lines) + analyze_static(settings, config_entries, env, peak_webs)
+    crash_lines = recent_crash_lines()
+    if crash_lines:
+        findings.append(finding("MEDIUM", "Crash-like journal lines in the last 24h",
+                                f"{len(crash_lines)} line(s); latest shown in the log.",
+                                "Match the timestamps with what you were doing."))
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+        write_csv(run, os.path.join(out_dir, "samples.csv"))
+        with open(os.path.join(out_dir, "report.md"), "w") as f:
+            f.write(render_report(run, findings, env, config_entries, crash_lines, settings))
+    if json_path:
+        os.makedirs(os.path.dirname(os.path.abspath(json_path)), exist_ok=True)
+        tmp = json_path + ".tmp"
+        with open(tmp, "w") as f:       # write-then-rename: a reader never sees a half-written log
+            json.dump(session_to_json(run, findings, env, config_entries, crash_lines, settings,
+                                      started_at or time.time()), f, indent=1)
+        os.replace(tmp, json_path)
+    if notify:
+        notify_findings(findings, json_path or os.path.join(out_dir, "report.md"))
+    return findings
+
+
+def notify_findings(findings, report_path):
+    """Desktop notification when a session has actionable findings. Best effort; silent if unavailable."""
+    top = [f for f in sorted(findings, key=lambda f: SEVERITY_ORDER[f["severity"]]) if f["severity"] in ("HIGH", "MEDIUM")]
+    if not top:
+        return
+    body = "\n".join(f"[{f['severity']}] {f['title']}" for f in top[:3]) + f"\nLog: {report_path}"
+    try:
+        subprocess.run(["notify-send", "-a", "Bharat diagnostics", f"Bharat Browser: {len(top)} issue(s) found", body],
+                       timeout=5, capture_output=True)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def prune_sessions(base, keep):
+    """Deletes the oldest session-YYYYmmdd-HHMMSS.json logs beyond `keep`. Touches nothing else."""
+    try:
+        sessions = sorted(f for f in os.listdir(base) if SESSION_RE.match(f) and os.path.isfile(os.path.join(base, f)))
+    except OSError:
+        return []
+    doomed = sessions[:-keep] if keep > 0 else sessions
+    for f in doomed:
+        try:
+            os.unlink(os.path.join(base, f))
+        except OSError:
+            pass
+    return doomed
+
+
+def update_latest_link(base, session_file):
+    link = os.path.join(base, "latest.json")
+    try:
+        if os.path.islink(link):
+            os.unlink(link)
+        if not os.path.exists(link):
+            os.symlink(os.path.basename(session_file), link)
+    except OSError:
+        pass
+
+
+def wait_for_browser(monitor, poll=3.0):
+    """Blocks cheaply until a browser process exists. Returns False if asked to stop first."""
+    while not STOP["flag"]:
+        if monitor.find_browser_pids():
+            return True
+        _interruptible_sleep(poll)
+    return False
+
+
+def watch(args):
+    base = args.watch_dir
+    os.makedirs(base, exist_ok=True)
+    monitor = load_monitor_module()
+    print(f"Watching for Bharat Browser sessions; JSON logs go to {base}", flush=True)
+    while wait_for_browser(monitor):
+        started = time.time()
+        stamp = time.strftime("session-%Y%m%d-%H%M%S")
+        print(f"[{time.strftime('%H:%M:%S')}] Browser detected, recording {stamp}", flush=True)
+        run = collect(monitor, args.interval, None, 0, quiet=args.quiet)
+        length = run.samples[-1]["t"] if run.samples else 0.0
+        if length < args.min_session:
+            print(f"[{time.strftime('%H:%M:%S')}] Session lasted {length:.0f}s (< {args.min_session:.0f}s); not reported.", flush=True)
+            continue
+        session_file = os.path.join(base, stamp + ".json")
+        findings = finish_session(run, notify=args.notify, json_path=session_file, started_at=started)
+        update_latest_link(base, session_file)
+        removed = prune_sessions(base, args.keep)
+        actionable = [f for f in findings if f["severity"] in ("HIGH", "MEDIUM")]
+        print(f"[{time.strftime('%H:%M:%S')}] Session ended after {length / 60:.1f} min: "
+              f"{len(actionable)} issue(s). Log: {session_file}"
+              + (f" (pruned {len(removed)} old)" if removed else ""), flush=True)
+    print("Stopping.", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Diagnose a running Bharat Browser and suggest improvements.")
     ap.add_argument("--interval", type=float, default=5.0, help="Seconds between samples (default: 5)")
@@ -560,30 +753,24 @@ def main():
     ap.add_argument("--snapshot", action="store_true", help="Quick ~10s check (no leak analysis)")
     ap.add_argument("--wait", type=float, default=30.0, help="Seconds to wait for the browser to start (default: 30)")
     ap.add_argument("--output-dir", default=None, help="Directory for report.md and samples.csv (default: ./bharat-diagnostics-<timestamp>)")
+    ap.add_argument("--watch", action="store_true", help="Diagnose every browser session, forever (waits for each launch)")
+    ap.add_argument("--watch-dir", default=DEFAULT_WATCH_DIR, help="Where watch mode stores JSON session logs (default: <project>/logs)")
+    ap.add_argument("--keep", type=int, default=50, help="Watch mode: keep this many most recent session logs (default: 50)")
+    ap.add_argument("--min-session", type=float, default=30.0, help="Watch mode: skip reports for sessions shorter than this (default: 30s)")
+    ap.add_argument("--notify", action="store_true", help="Desktop notification when a session has HIGH/MEDIUM findings")
+    ap.add_argument("--quiet", action="store_true", help="No per-sample status lines")
     args = ap.parse_args()
+    install_signal_handlers()
+
+    if args.watch:
+        return watch(args)
     if args.snapshot:
         args.duration, args.interval = 10.0, 2.0
 
     out_dir = args.output_dir or f"bharat-diagnostics-{int(time.time())}"
-    os.makedirs(out_dir, exist_ok=True)
     print(f"Bharat Browser diagnostics -> {out_dir}  (Ctrl+C to stop and write the report)")
-
-    run = collect(load_monitor_module(), args.interval, args.duration, args.wait)
-
-    settings = load_settings()
-    env = read_environment(settings)
-    config_entries = scan_config_dir()
-    peak_webs = max((sum(1 for p in s["procs"] if p["role"] == "web_process") for s in run.samples), default=0)
-    findings = analyze_run(run) + analyze_static(settings, config_entries, env, peak_webs)
-    crash_lines = recent_crash_lines()
-    if crash_lines:
-        findings.append(finding("MEDIUM", "Crash-like journal lines in the last 24h",
-                                f"{len(crash_lines)} line(s); latest shown in the report.",
-                                "Open the report's journal section and match timestamps with what you were doing."))
-
-    write_csv(run, os.path.join(out_dir, "samples.csv"))
-    with open(os.path.join(out_dir, "report.md"), "w") as f:
-        f.write(render_report(run, findings, env, config_entries, crash_lines, settings))
+    run = collect(load_monitor_module(), args.interval, args.duration, args.wait, quiet=args.quiet)
+    findings = finish_session(run, out_dir, notify=args.notify, json_path=os.path.join(out_dir, "session.json"), started_at=time.time() - (run.samples[-1]["t"] if run.samples else 0))
 
     print()
     for f in sorted(findings, key=lambda f: SEVERITY_ORDER[f["severity"]]):

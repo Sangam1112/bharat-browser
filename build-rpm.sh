@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.3.1"
+VERSION="1.3.2"
 PKG_NAME="bharat-browser"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/Downloads}"
 BUILD_ROOT="/tmp/rpm_build_${PKG_NAME}"
@@ -52,6 +52,8 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.3.2-1
+- Performance & Memory Fixes: signal disconnection on tab close, throttled shield badge updates, O(1) hierarchical adblock pre-lookup, stale cache cleanup
 * Wed Sep 30 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.3.1-1
 - Performance: GPU detection moved off the startup path; history/session writes debounced and compacted; autocomplete model updated in place
 * Wed Sep 30 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.3.0-1

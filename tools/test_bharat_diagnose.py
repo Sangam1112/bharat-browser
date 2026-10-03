@@ -73,7 +73,11 @@ class Analysis(unittest.TestCase):
         r.events = [{"t": i * 10, "kind": "exit", "pid": 10 + i, "role": "web_process"} for i in range(4)]
         self.assertIn("WebKit renderer processes exited repeatedly", titles(bd.analyze_run(r)))
         r.main_exited = True
-        self.assertIn("Browser exited during monitoring", titles(bd.analyze_run(r), "HIGH"))
+        # No journal evidence: a normal quit is INFO, never an alarm
+        self.assertIn("Browser session ended", titles(bd.analyze_run(r), "INFO"))
+        self.assertNotIn("Browser exited unexpectedly", titles(bd.analyze_run(r)))
+        # With crash evidence it escalates
+        self.assertIn("Browser exited unexpectedly", titles(bd.analyze_run(r, ["segfault in WebKitWebProcess"]), "HIGH"))
 
     def test_memory_pressure(self):
         r = make_run(300, 5, lambda t: 100, lambda t: 300, avail_mb=300, psi=25.0)
@@ -85,6 +89,76 @@ class Analysis(unittest.TestCase):
 
     def test_no_samples(self):
         self.assertEqual(titles(bd.analyze_run(bd.Run())), ["No data collected"])
+
+
+class Watch(unittest.TestCase):
+    def test_sample_store_is_bounded_and_keeps_both_ends(self):
+        st = bd.SampleStore(cap=100)
+        for i in range(10_000):
+            st.add({"t": float(i)})
+        self.assertLessEqual(len(st.items), 100)
+        self.assertEqual(st.items[0]["t"], 0.0)
+        self.assertGreater(st.items[-1]["t"], 9_000)           # recent end is still represented
+        ts = [x["t"] for x in st.items]
+        self.assertEqual(ts, sorted(ts))
+
+    def test_prune_only_removes_old_session_logs(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            names = [f"session-20260101-00000{i}.json" for i in range(5)]
+            for n in names + ["notes.json", "session-keep.txt"]:
+                open(os.path.join(d, n), "w").close()
+            removed = bd.prune_sessions(d, 2)
+            self.assertEqual(removed, names[:3])
+            self.assertEqual(sorted(os.listdir(d)), sorted(names[3:] + ["notes.json", "session-keep.txt"]))
+
+    def test_latest_link_points_at_newest_session(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            for n in ("session-20260101-000001.json", "session-20260101-000002.json"):
+                open(os.path.join(d, n), "w").close()
+                bd.update_latest_link(d, os.path.join(d, n))
+            self.assertEqual(os.readlink(os.path.join(d, "latest.json")), "session-20260101-000002.json")
+
+
+class SessionLifecycle(unittest.TestCase):
+    def test_full_session_appear_sample_exit_report(self):
+        import tempfile
+
+        class FakeMonitor:           # "browser" = this test process, which vanishes after 4 polls
+            def __init__(self): self.calls = 0
+            def find_browser_pids(self):
+                self.calls += 1
+                return {os.getpid(): "main"} if self.calls <= 4 else {}
+
+        bd.STOP["flag"] = False
+        run = bd.collect(FakeMonitor(), interval=0.01, duration=None, wait_for_browser=0, quiet=True)
+        self.assertTrue(run.main_exited)
+        self.assertEqual(len(run.samples), 4)
+        self.assertEqual(run.samples[0]["procs"][0]["role"], "main")
+        with tempfile.TemporaryDirectory() as d:
+            jp = os.path.join(d, "logs", "session-20260101-000000.json")
+            findings = bd.finish_session(run, notify=False, json_path=jp, started_at=1_700_000_000.0)
+            self.assertIn("Browser session ended", [f["title"] for f in findings])
+            import json
+            log = json.load(open(jp))
+            self.assertEqual(log["schema"], 1)
+            self.assertTrue(log["browser_exited"])
+            self.assertEqual(len(log["samples"]), 4)
+            self.assertIn("main", log["summary"]["roles"])
+            self.assertEqual(sorted(log["summary"]["issues"]), ["HIGH", "LOW", "MEDIUM"])
+            self.assertFalse(os.path.exists(jp + ".tmp"))
+            for key in ("homepage", "search_engine", "download_dir"):   # settings that can hold URLs/paths
+                self.assertNotIn(key, log["settings"])
+
+    def test_stop_flag_ends_waiting(self):
+        class Never:
+            def find_browser_pids(self): return {}
+        bd.STOP["flag"] = True
+        try:
+            self.assertFalse(bd.wait_for_browser(Never(), poll=0.01))
+        finally:
+            bd.STOP["flag"] = False
 
 
 class Static(unittest.TestCase):
