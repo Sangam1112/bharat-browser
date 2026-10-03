@@ -3,6 +3,12 @@
 All notable changes to Bharat Browser. Versions follow `MAJOR.MINOR.PATCH`.
 Releases are signed; the in-app updater only installs a release whose signature verifies.
 
+## [1.4.1] - 2026-10-03
+
+### Fixed
+- "Check for updates" could report the old version for a few minutes after a release, because GitHub caches the raw file address. It now asks GitHub's API first and falls back to the raw address. Updates are still only installed if the release signature verifies.
+- When an update can't be installed automatically, the message now says where to download it instead of mentioning `git pull`.
+
 ## [1.4.0] - 2026-10-03
 
 ### Added

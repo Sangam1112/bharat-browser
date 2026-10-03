@@ -222,6 +222,50 @@ class StatsTests(TmpDirCase):
         self.assertEqual(bb.load_privacy_stats(), {"since": 1.0, "blocked": 4, "params": 2, "https": 9})
 
 
+class UpdateInfoTests(unittest.TestCase):
+    """fetch_release_info must prefer the API, fall back to the cached raw address, and fail loudly."""
+
+    def _run(self, responses):
+        calls = []
+
+        class Resp:
+            def __init__(self, status, body): self.status, self.body = status, body
+            def read(self, n): return self.body
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def fake_urlopen(req, timeout=0):
+            calls.append((req.full_url, req.get_header("Accept")))
+            outcome = responses[len(calls) - 1]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return Resp(*outcome)
+
+        original = bb.urllib.request.urlopen
+        bb.urllib.request.urlopen = fake_urlopen
+        try:
+            return bb.fetch_release_info("test", sources=bb.UPDATE_INFO_SOURCES), calls
+        finally:
+            bb.urllib.request.urlopen = original
+
+    def test_api_answer_wins(self):
+        data, calls = self._run([(200, b'{"version": "9.9.9", "sha256": "x"}')])
+        self.assertEqual(data["version"], "9.9.9")
+        self.assertEqual(len(calls), 1)
+        self.assertIn("api.github.com", calls[0][0])
+        self.assertEqual(calls[0][1], "application/vnd.github.raw+json")
+
+    def test_falls_back_when_api_is_rate_limited_or_odd(self):
+        for first in (OSError("HTTP Error 403: rate limit exceeded"), (200, b"not json"), (200, b'{"nope": 1}'), (500, b"")):
+            data, calls = self._run([first, (200, b'{"version": "1.2.3"}')])
+            self.assertEqual(data["version"], "1.2.3")
+            self.assertIn("raw.githubusercontent.com", calls[1][0])
+
+    def test_raises_when_every_source_fails(self):
+        with self.assertRaises(OSError):
+            self._run([OSError("boom1"), OSError("boom2")])
+
+
 @unittest.skipUnless(os.environ.get("BHARAT_TEST_KEYRING", "1") == "1", "keyring tests disabled")
 class SecretServiceTests(unittest.TestCase):
     def test_roundtrip_against_real_keyring(self):

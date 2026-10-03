@@ -57,6 +57,8 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.4.1-1
+- Update check asks GitHub's API first (no stale cache right after a release) and falls back to the raw address; clearer message when an update can't be installed automatically
 * Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.4.0-1
 - Pinned tabs and tab menu, reader mode, per-site controls, password saving via the system keyring, import from other browsers, tracker list updates, privacy report, HTTPS-only warning, spell check
 * Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.3.7-1

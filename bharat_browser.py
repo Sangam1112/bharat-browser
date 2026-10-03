@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.4.0 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.4.1 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -8,7 +8,7 @@ import os
 import json
 import shutil
 
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 # The self-updater cannot rewrite a root-owned package install, so it keeps its updates in a per-user copy
 # that the launcher (/usr/bin/bharat-browser) prefers over the system one.
 USER_INSTALL_DIR = os.path.expanduser("~/.local/share/bharat-browser")
@@ -402,6 +402,36 @@ def ed25519_verify(public_key, message, signature):
     return ((lhs[0] * rhs[2] - rhs[0] * lhs[2]) % _ED_P == 0
             and (lhs[1] * rhs[2] - rhs[1] * lhs[2]) % _ED_P == 0)
 # ed25519 verify end
+
+
+# Where the updater learns the latest version. GitHub's API is asked first: raw.githubusercontent.com
+# caches the branch address for several minutes, so right after a release it can still report the old
+# version. The raw address is the fallback (the API allows only 60 requests/hour per IP). Whichever
+# answers, nothing is installed unless the release's signature verifies.
+UPDATE_INFO_SOURCES = (
+    ("https://api.github.com/repos/Sangam1112/bharat-browser/contents/package.json?ref=master",
+     {"Accept": "application/vnd.github.raw+json"}),
+    ("https://raw.githubusercontent.com/Sangam1112/bharat-browser/master/package.json", {}),
+)
+
+
+def fetch_release_info(user_agent, timeout=8, sources=None):
+    """package.json of the latest release as a dict with at least a "version" string.
+    Raises the last error if every source fails."""
+    last_error = RuntimeError("no update source configured")
+    for url, headers in (sources or UPDATE_INFO_SOURCES):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": user_agent, **headers})
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                if response.status != 200:
+                    raise RuntimeError(f"HTTP {response.status} from {url}")
+                data = json.loads(response.read(1 << 20).decode("utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("version"), str) and data["version"].strip():
+                return data
+            raise ValueError(f"unexpected update info from {url}")
+        except Exception as e:
+            last_error = e
+    raise last_error
 
 
 def verify_update_signature(version, source, signature_hex):
@@ -3781,16 +3811,10 @@ class BharatBrowserWindow(Gtk.Window):
 
     def async_git_update_check(self):
         try:
-            url = "https://raw.githubusercontent.com/Sangam1112/bharat-browser/master/package.json"
-            req = urllib.request.Request(url, headers={"User-Agent": f"BharatBrowser/{self.current_version}"})
-            with urllib.request.urlopen(req, timeout=6) as response:
-                if response.status != 200:
-                    GLib.idle_add(self.push_notification_status, "⚠️ Couldn't check for updates right now")
-                    return
-                data = json.loads(response.read(1 << 20).decode('utf-8'))
-                remote_version = data.get("version", "").strip()
-                remote_sha256 = data.get("sha256", "").strip().lower()
-                remote_signature = data.get("signature", "").strip().lower()
+            data = fetch_release_info(f"BharatBrowser/{self.current_version}", timeout=6)
+            remote_version = data.get("version", "").strip()
+            remote_sha256 = str(data.get("sha256", "")).strip().lower()
+            remote_signature = str(data.get("signature", "")).strip().lower()
 
             if not remote_version or self.compare_versions(remote_version, self.current_version) <= 0:
                 print(f"Bharat Browser is up to date (v{self.current_version}).")
@@ -3820,16 +3844,10 @@ class BharatBrowserWindow(Gtk.Window):
 
         def _worker():
             try:
-                url = "https://raw.githubusercontent.com/Sangam1112/bharat-browser/master/package.json"
-                req = urllib.request.Request(url, headers={"User-Agent": f"BharatBrowser/{self.current_version}"})
-                with urllib.request.urlopen(req, timeout=8) as response:
-                    if response.status != 200:
-                        GLib.idle_add(_done, f"❌ Server returned HTTP {response.status}", False, True)
-                        return
-                    data = json.loads(response.read(1 << 20).decode('utf-8'))
-                    remote_version = data.get("version", "").strip()
-                    remote_sha256 = data.get("sha256", "").strip().lower()
-                    remote_signature = data.get("signature", "").strip().lower()
+                data = fetch_release_info(f"BharatBrowser/{self.current_version}", timeout=8)
+                remote_version = data.get("version", "").strip()
+                remote_sha256 = str(data.get("sha256", "")).strip().lower()
+                remote_signature = str(data.get("signature", "")).strip().lower()
 
                 if not remote_version or self.compare_versions(remote_version, self.current_version) <= 0:
                     GLib.idle_add(_done, f"✅ Bharat Browser is up to date (v{self.current_version}).", False, True)
@@ -3841,7 +3859,8 @@ class BharatBrowserWindow(Gtk.Window):
                     GLib.idle_add(_done, f"🎉 Version v{remote_version} installed successfully! Click 'Restart Now' to apply.", True, True)
                     GLib.idle_add(self.show_update_notification_dialog, remote_version, True)
                 else:
-                    GLib.idle_add(_done, f"⬆️ Version v{remote_version} is available on GitHub (Install via package manager or git pull).", False, True)
+                    GLib.idle_add(_done, f"⬆️ Version v{remote_version} is available but couldn't be installed automatically. "
+                                    "Download it from github.com/Sangam1112/bharat-browser/releases or use your package manager.", False, True)
                     GLib.idle_add(self.show_update_notification_dialog, remote_version, False)
             except Exception as e:
                 if looks_offline(str(e)):
