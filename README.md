@@ -12,7 +12,7 @@
 [![Installer](https://img.shields.io/badge/installer-~100%20KB-brightgreen.svg)](#-small-by-design)
 [![Updates](https://img.shields.io/badge/updates-signed%20(Ed25519)-6366f1.svg)](#-keeping-it-up-to-date)
 
-[**Highlights**](#-highlights) · [**Screenshots**](#-screenshots) · [**Install**](#-install) · [**Update**](#-keeping-it-up-to-date) · [**Shortcuts**](#-keyboard-shortcuts) · [**Privacy**](#-privacy--what-it-connects-to) · [**Develop**](#-development)
+[**Highlights**](#-highlights) · [**Screenshots**](#-screenshots) · [**Install**](#-install) · [**Update**](#-keeping-it-up-to-date) · [**Shortcuts**](#-keyboard-shortcuts) · [**Privacy**](#-privacy--what-it-connects-to)
 
 <br>
 
@@ -267,27 +267,6 @@ Spotted a security problem? Please open a [GitHub issue](https://github.com/Sang
 That's roughly **500–1000× smaller**. Chrome, Firefox, Chromium, Brave and Edge each bundle a complete rendering engine (Blink + V8, or Gecko + SpiderMonkey), typically 150–250 MB on its own. Bharat Browser ships none of that: it's a ~280 KB Python/GTK3 program that calls into **WebKitGTK**, a system library most Linux desktops already have for other GTK apps, from the same engine family as Safari.
 
 > Bharat Browser's sizes were measured from this repository's release packages. The other browsers' figures are well-known public approximations that vary by version and platform.
-
----
-
-## 🧪 Development
-
-```bash
-git clone https://github.com/Sangam1112/bharat-browser.git && cd bharat-browser
-python3 bharat_browser.py            # run straight from the checkout
-tools/run-tests.sh                   # all automated checks
-```
-
-The tests include unit tests for the browser's logic, real-window tests (they need a display, and use a throw-away profile and local servers, never yours) and a test that runs every install script against stubbed system tools.
-
-| Task | Command |
-|---|---|
-| Bump the version everywhere | `python3 tools/bump-version.py X.Y.Z "summary"` |
-| Build the `.deb` / `.rpm` / Fedora archive (also signs the release) | `./build-deb.sh` · `./build-rpm.sh` |
-| Publish (push, tag, verify, GitHub Release) | `tools/release.sh` |
-| Check a published release like the updater does | `python3 tools/verify-published.py` |
-
-`package.json` is the single source of truth for the version. See [`CHANGELOG.md`](CHANGELOG.md) for what changed, and `.agents/rules/release-management.md` for the full release checklist.
 
 ---
 
