@@ -58,6 +58,10 @@ cp -r ${BUILD_ROOT}/* %{buildroot}/
 /usr/share/icons/hicolor/256x256/apps/bharat-browser.png
 
 %changelog
+* Sun Oct 04 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.4.4-1
+- Per-tab memory
+* Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.4.3-1
+- Path rules (/pagead/, /ads/, /telemetry ...) are now enforced by the native blocker; Python ad matching removed; honest privacy report; diagnose tool no longer misreads a second instance as a main-process leak
 * Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.4.2-1
 - Red Hat family support: the RPM and install-fedora.sh accept either webkit2gtk4.1 (Fedora) or webkit2gtk3 (RHEL, Rocky, AlmaLinux, CentOS Stream)
 * Sat Oct 03 2026 Bharat Browser Developer <developer@bharatbrowser.org> - 1.4.1-1

@@ -47,11 +47,40 @@ class UrlHelperTests(unittest.TestCase):
             self.assertTrue(bb.is_local_network_host(h), h)
         self.assertFalse(bb.is_local_network_host("example.com"))
 
-    def test_adblock_basics(self):
-        self.assertTrue(bb.is_ad_or_tracker("https://doubleclick.net/x.js"))
-        self.assertTrue(bb.is_ad_or_tracker("https://sub.doubleclick.net/x"))
-        self.assertFalse(bb.is_ad_or_tracker("https://example.org/page"))
-        self.assertFalse(bb.is_ad_or_tracker("https://rr1.googlevideo.com/videoplayback"))
+    def test_builtin_rules_cover_domains_paths_and_streaming(self):
+        rules = json.loads(bb.build_content_blocker_rules_json())
+        filters = [r["trigger"]["url-filter"] for r in rules if r["action"]["type"] == "block"]
+        self.assertTrue(any("doubleclick" in f for f in filters))
+        paths = [r for r in rules if r["action"]["type"] == "block" and "resource-type" in r["trigger"]]
+        self.assertEqual(len(paths), len(bb.BLOCKED_PATH_SEGMENTS))
+        for r in paths:
+            self.assertNotIn("document", r["trigger"]["resource-type"], "page navigations are never blocked by path")
+            self.assertIn("*youtube.com", r["trigger"]["unless-domain"])
+        kinds = [r["action"]["type"] for r in rules]
+        # manifest exemptions must come after the path rules and before the domain rules
+        self.assertLess(max(i for i, r in enumerate(rules) if "resource-type" in r["trigger"]), kinds.index("ignore-previous-rules"))
+        for r in rules:
+            self.assertNotIn("|", r["trigger"]["url-filter"], "WebKit content rules do not support alternation")
+
+    def test_probe_picks_only_a_clear_winner(self):
+        before = {10: 100, 11: 100, 12: 100}
+        self.assertEqual(bb.pick_probe_pid(before, {10: 101, 11: 125, 12: 100}), 11)
+        self.assertIsNone(bb.pick_probe_pid(before, {10: 101, 11: 102, 12: 100}), "too little CPU moved to trust")
+        self.assertIsNone(bb.pick_probe_pid(before, {10: 122, 11: 125, 12: 100}), "two processes moved about equally")
+        self.assertIsNone(bb.pick_probe_pid({}, {}), "no renderers at all")
+        self.assertIsNone(bb.pick_probe_pid({10: None}, {10: 50}), "unreadable process is skipped")
+
+    def test_memory_text(self):
+        self.assertEqual(bb.format_memory_mb(None), "—")
+        self.assertEqual(bb.format_memory_mb(51.4), "51 MB")
+        self.assertEqual(bb.format_memory_mb(1536), "1.5 GB")
+
+    def test_proc_readers_on_this_process(self):
+        self.assertGreater(bb._proc_pss_mb(os.getpid()), 1.0)
+        self.assertIsInstance(bb._proc_ticks(os.getpid()), int)
+        self.assertIsNone(bb._proc_ticks(2 ** 22 + 12345))
+        self.assertIsNone(bb._proc_pss_mb(2 ** 22 + 12345))
+        self.assertIsInstance(bb.web_process_pids(), list)
 
     def test_site_host_of(self):
         self.assertEqual(bb.site_host_of("https://WWW.Example.com:8080/x"), "www.example.com")
@@ -193,7 +222,7 @@ class TrackerListTests(unittest.TestCase):
 
     def test_rules_json_is_third_party_only_and_valid(self):
         rules = json.loads(bb.build_content_blocker_rules_json({"tracker.example"}))
-        extra = [r for r in rules if "tracker" in r["trigger"]["url-filter"]]
+        extra = [r for r in rules if "tracker\\.example" in r["trigger"]["url-filter"]]
         self.assertEqual(len(extra), 1)
         for r in extra:
             self.assertEqual(r["trigger"]["load-type"], ["third-party"])

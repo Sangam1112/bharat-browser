@@ -54,6 +54,15 @@ class Analysis(unittest.TestCase):
         self.assertIn("Memory keeps growing during the run", titles(f))
         self.assertNotIn("Main (Python/GTK) process memory is growing", titles(f))
 
+    def test_second_instance_starting_midrun_is_not_a_leak(self):
+        # Regression: a flat main process plus two more browser instances appearing at t=525 s used to
+        # be summed into one series and flagged as "main process memory is growing".
+        r = make_run(780, 5, lambda t: 220, lambda t: 300)
+        for s in r.samples:
+            if s["t"] >= 525:
+                s["procs"] += [proc("main", 3, 205), proc("main", 4, 205)]
+        self.assertNotIn("Main (Python/GTK) process memory is growing", titles(bd.analyze_run(r)))
+
     def test_noise_without_trend_is_not_a_leak(self):
         r = make_run(600, 5, lambda t: 100 + (7 if int(t / 5) % 2 else -7), lambda t: 300)
         self.assertNotIn("Memory keeps growing during the run", titles(bd.analyze_run(r)))

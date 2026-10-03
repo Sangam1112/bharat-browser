@@ -279,6 +279,23 @@ def _series(samples, fn, warmup):
     return [p[0] for p in pts], [p[1] for p in pts]
 
 
+def _per_pid_series(samples, role, fn, warmup):
+    """{pid: (xs, ys)} for each process of `role`, from its own samples only. Summing a role's
+    processes would read a second browser instance starting mid-run (e.g. a private window's test
+    run or a relaunch) as the first one growing."""
+    pts = {}
+    for s in samples:
+        if s["t"] < warmup:
+            continue
+        for p in s["procs"]:
+            if p["role"] == role:
+                v = fn(p)
+                if v is not None:
+                    pts.setdefault(p["pid"], []).append((s["t"], v))
+    return {pid: ([t for t, _ in v], [y for _, y in v]) for pid, v in pts.items()
+            if v[-1][0] - v[0][0] >= MIN_TREND_SECONDS * 0.5}
+
+
 def finding(severity, title, evidence, suggestion):
     return {"severity": severity, "title": title, "evidence": evidence, "suggestion": suggestion}
 
@@ -306,25 +323,28 @@ def analyze_run(run, exit_crash_lines=None):
                 f"Total memory rose about {per_min:.1f} MB/min over {duration / 60:.0f} min (trend fit R2={r2:.2f}).",
                 "Repeat with the same tabs open and no navigation. If it still grows, a leak is likely - see the "
                 "per-role rates below to tell whether it is the Python main process or the WebKit renderers."))
-        for role in sorted({p["role"] for s in samples for p in s["procs"]}):
-            xs, ys = _series(samples, lambda s, r=role: (
-                sum((p["pss_kb"] if p["pss_kb"] is not None else p["rss_kb"]) for p in s["procs"] if p["role"] == r) / 1024.0),
-                warmup)
+        # Main process growth is the browser's own code, so judge each main process by itself.
+        worst = None
+        for pid, (xs, ys) in _per_pid_series(
+                samples, "main", lambda p: (p["pss_kb"] if p["pss_kb"] is not None else p["rss_kb"]) / 1024.0, warmup).items():
             sl, rr = linear_fit(xs, ys)
-            if sl * 60 > MEM_GROWTH_MB_PER_MIN and rr > 0.6 and role == "main":
-                out.append(finding(
-                    "HIGH", "Main (Python/GTK) process memory is growing",
-                    f"{sl * 60:.1f} MB/min, R2={rr:.2f}. Renderer growth would be page-driven; main-process growth is "
-                    "the browser's own code.",
-                    "Look for per-tab/per-navigation state that is never released: history/suggestion caches, "
-                    "adblock match caches, download or favicon lists, GLib timers/signal handlers not disconnected on tab close."))
-        fx, fy = _series(samples, lambda s: next((p["fds"] for p in s["procs"] if p["role"] == "main"), None), warmup)
-        fs, fr = linear_fit(fx, fy)
-        if fy and fs * 60 > 5 and fr > 0.6 and fy[-1] - fy[0] > 100:
+            if sl * 60 > MEM_GROWTH_MB_PER_MIN and rr > 0.6 and (worst is None or sl > worst[0]):
+                worst = (sl, rr)
+        if worst:
             out.append(finding(
-                "HIGH", "Main process open file descriptors keep growing",
-                f"{fy[0]} -> {fy[-1]} fds (+{fs * 60:.1f}/min). This ends in 'too many open files'.",
-                "Check for unclosed sockets/files: urllib responses without a context manager, downloads, pipes from subprocess."))
+                "HIGH", "Main (Python/GTK) process memory is growing",
+                f"{worst[0] * 60:.1f} MB/min, R2={worst[1]:.2f}. Renderer growth would be page-driven; main-process growth is "
+                "the browser's own code.",
+                "Look for per-tab/per-navigation state that is never released: history/suggestion caches, "
+                "adblock match caches, download or favicon lists, GLib timers/signal handlers not disconnected on tab close."))
+        for fx, fy in _per_pid_series(samples, "main", lambda p: p["fds"], warmup).values():
+            fs, fr = linear_fit(fx, fy)
+            if fs * 60 > 5 and fr > 0.6 and fy[-1] - fy[0] > 100:
+                out.append(finding(
+                    "HIGH", "Main process open file descriptors keep growing",
+                    f"{fy[0]} -> {fy[-1]} fds (+{fs * 60:.1f}/min). This ends in 'too many open files'.",
+                    "Check for unclosed sockets/files: urllib responses without a context manager, downloads, pipes from subprocess."))
+                break
     else:
         out.append(finding(
             "INFO", "Run too short for leak detection",

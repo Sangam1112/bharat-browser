@@ -50,6 +50,7 @@ It is a native GTK3 desktop app, not a repackaged Chromium or Electron. The ad b
 **🧭 Everyday touches**
 - **Reader mode** (`Ctrl+Alt+R`): any article as a clean page with adjustable text size and themes.
 - **Pinned tabs** that survive restarts, plus a one-key way to reopen a closed tab.
+- **Tab Memory** (main menu): see which tab is using the most memory, then suspend or close it from the list.
 - **Switch in a minute**: import bookmarks and history from Firefox, Chrome, Brave, Edge, Vivaldi, Opera and more.
 - **A friendly offline page** that reloads itself when you're back online, with a kite game while you wait 🪁.
 
@@ -102,7 +103,7 @@ Packages are on the [**Releases page**](https://github.com/Sangam1112/bharat-bro
 <tr valign="top"><td>
 
 ```bash
-VERSION=1.4.2
+VERSION=1.4.4
 wget https://github.com/Sangam1112/bharat-browser/releases/download/v$VERSION/bharat-browser_${VERSION}-1_all.deb
 sudo apt install ./bharat-browser_${VERSION}-1_all.deb
 ```
@@ -110,7 +111,7 @@ sudo apt install ./bharat-browser_${VERSION}-1_all.deb
 </td><td>
 
 ```bash
-VERSION=1.4.2
+VERSION=1.4.4
 wget https://github.com/Sangam1112/bharat-browser/releases/download/v$VERSION/bharat-browser-${VERSION}-1.noarch.rpm
 sudo dnf install ./bharat-browser-${VERSION}-1.noarch.rpm
 ```
@@ -143,7 +144,7 @@ export PATH="$HOME/.local/bin:$PATH"
 <summary><b>Fedora without git</b>: use the release archive</summary>
 
 ```bash
-VERSION=1.4.2
+VERSION=1.4.4
 wget https://github.com/Sangam1112/bharat-browser/releases/download/v$VERSION/bharat-browser_${VERSION}_fedora.tar.gz
 mkdir -p /tmp/bharat_fedora
 tar -xzf bharat-browser_${VERSION}_fedora.tar.gz -C /tmp/bharat_fedora

@@ -41,6 +41,12 @@ PAGES = {
                "<button id='go' type='submit'>Sign in</button></form></body></html>"),
     "/done": "<html><title>done</title><body>ok</body></html>",
     "/js": "<html><head><title>js-off</title></head><body><script>document.title='js-ran'</script></body></html>",
+    "/pathrules": ("<html><title>pathrules</title><body><img src='/pagead/p.png'><img src='/sub/ads/p.png'>"
+                   "<img src='/telemetry.png'><img src='/pagead/stream.m3u8'><img src='/roads/ok.png'><img src='/adsense.png'>"
+                   "<img src='/fine/ok.png'></body></html>"),
+    "/ads/landing": "<html><title>landing</title><body>an ordinary page whose address contains /ads/</body></html>",
+    "/mem-heavy": ("<html><title>mem-heavy</title><body><script>window.keep=[];for(let i=0;i<20;i++){"
+                   "let a=new Float64Array(1000000);a.fill(i+1);window.keep.push(a)}</script>heavy</body></html>"),
     "/third": "<html><title>third</title><body><img src='http://localhost:%PORT%/pixel'></body></html>",
 }
 
@@ -51,7 +57,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
         Handler.hits[path] = Handler.hits.get(path, 0) + 1
-        if path == "/pixel":
+        if path == "/pixel" or path.endswith(".png"):
             body, ctype = b"\x89PNG", "image/png"
         else:
             body = PAGES.get(path, "<html><title>404</title></html>").replace("%PORT%", str(self.server.server_port)).encode()
@@ -209,6 +215,71 @@ class WindowFeatureTests(unittest.TestCase):
         self.load("/third")
         self.assertTrue(spin(lambda: Handler.hits.get("/pixel", 0) > 0, 5), "ad blocking off for this site lets it load")
 
+    def test_path_rules_block_subresources_natively(self):
+        self.load("/pathrules")
+        spin(lambda: Handler.hits.get("/fine/ok.png", 0) > 0 and Handler.hits.get("/roads/ok.png", 0) > 0, 5)
+        spin(lambda: False, 1.0)
+        for blocked in ("/pagead/p.png", "/sub/ads/p.png", "/telemetry.png"):
+            self.assertEqual(Handler.hits.get(blocked, 0), 0, f"{blocked} is blocked by the native path rules")
+        for allowed in ("/roads/ok.png", "/adsense.png", "/fine/ok.png"):
+            self.assertGreater(Handler.hits.get(allowed, 0), 0, f"{allowed} must not be caught by '/ads/' or '/adserver/'")
+        self.assertGreater(Handler.hits.get("/pagead/stream.m3u8", 0), 0, "streaming manifests are exempt")
+        # navigating to a page whose address contains /ads/ is never blocked
+        self.assertEqual(self.load("/ads/landing", wait_title="landing").get_title(), "landing")
+        # and the per-site ad-block switch turns the path rules off too
+        bb.set_site_value(self.win.site_settings, "127.0.0.1", "adblock", False)
+        self.addCleanup(self.win.site_settings.clear)
+        self.load("/pathrules")
+        self.assertTrue(spin(lambda: Handler.hits.get("/pagead/p.png", 0) > 0, 5), "ad blocking off lets /pagead/ load")
+
+    def measure(self, tabs=None):
+        box = {}
+        self.win.measure_tab_memory(lambda r: box.setdefault("r", r), tabs)
+        self.assertTrue(spin(lambda: "r" in box, 30), "memory measurement never finished")
+        return box["r"]
+
+    def test_tab_memory_finds_the_heavy_tab(self):
+        before = len(self.win._tab_boxes())
+        self.win.create_new_tab(self.base + "/blank")
+        spin(lambda: False, 1.5)
+        self.win.create_new_tab(self.base + "/mem-heavy")
+        spin(lambda: False, 2.5)
+        self.addCleanup(lambda: [self.win.close_tab(t) for t in self.win._tab_boxes()[before:]])
+        results = self.measure()
+        new = {t._bharat_label.get_text(): i for t, i in results.items() if t in self.win._tab_boxes()[before:]}
+        self.assertEqual(set(new), {"blank", "mem-heavy"})
+        for info in new.values():
+            self.assertEqual(info["state"], "ok")
+        self.assertNotEqual(new["blank"]["pid"], new["mem-heavy"]["pid"], "each tab has its own renderer")
+        self.assertGreater(new["mem-heavy"]["mb"], new["blank"]["mb"] + 60, "the tab holding ~160 MB is the heavy one")
+        # a repeat measurement reuses the match instead of probing again
+        again = self.measure()
+        self.assertEqual({t: i["pid"] for t, i in results.items() if t in again},
+                         {t: i["pid"] for t, i in again.items() if t in results})
+
+    def test_tab_memory_reports_suspended_tabs_and_dialog_opens(self):
+        self.win.create_new_tab(self.base + "/blank")
+        spin(lambda: False, 1.0)
+        victim = self.win._tab_boxes()[-1]
+        self.win.create_new_tab(self.base + "/blank")  # becomes the active tab
+        spin(lambda: False, 1.0)
+        self.addCleanup(lambda: [self.win.close_tab(t) for t in (victim, self.win._tab_boxes()[-1]) if t.get_parent()])
+        self.win._suspend_tab(victim)
+        spin(lambda: False, 1.0)
+        self.assertEqual(self.measure([victim])[victim]["state"], "suspended")
+        seen = {}
+
+        def close_dialog():
+            for w in Gtk.Window.list_toplevels():
+                if isinstance(w, Gtk.Dialog) and w.get_title() == "Tab Memory":
+                    seen["title"] = w.get_title()
+                    w.response(Gtk.ResponseType.CLOSE)
+            return False
+
+        GLib.timeout_add(2500, close_dialog)
+        self.win.open_tab_memory()  # modal: returns once close_dialog() has dismissed it
+        self.assertEqual(seen.get("title"), "Tab Memory")
+
     def test_zoom_is_remembered_per_site(self):
         wv = self.load("/blank")
         self.win.adjust_zoom(0.3)
@@ -301,15 +372,15 @@ class WindowFeatureTests(unittest.TestCase):
 
     # ---- stats / report / import ---------------------------------------
     def test_privacy_report_and_stats(self):
-        wv = self.win.get_active_webview()
-        before = self.win.stats["blocked"]
-        self.win._count_blocked(wv, "https://tracker.evil.example/x.js")
-        self.assertEqual(self.win.stats["blocked"], before + 1)
+        before = self.win.stats["params"]
+        self.win._count_event("params")
+        self.assertEqual(self.win.stats["params"], before + 1)
         html = self.win.build_privacy_report_html()
-        self.assertIn("tracker.evil.example", html)
         self.assertIn("Privacy Report", html)
+        self.assertIn("Tracking parameters removed", html)
+        self.assertNotIn("Trackers &amp; ads blocked", html, "native blocks are not reported to us, so no fake zero")
         self.win._run_session_save()
-        self.assertGreaterEqual(bb.load_privacy_stats()["blocked"], before + 1, "stats are persisted")
+        self.assertGreaterEqual(bb.load_privacy_stats()["params"], before + 1, "stats are persisted")
 
     def test_import_merges_into_live_lists(self):
         marks = [{"url": "https://imp.example/", "title": "Imp", "added": 1}]

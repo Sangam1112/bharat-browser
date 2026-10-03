@@ -3,6 +3,21 @@
 All notable changes to Bharat Browser. Versions follow `MAJOR.MINOR.PATCH`.
 Releases are signed; the in-app updater only installs a release whose signature verifies.
 
+## [1.4.4] - 2026-10-04
+
+### Added
+- **Tab Memory** (main menu): see how much memory each tab uses, heaviest first, and go to, suspend or close a tab right from the list. Right-clicking a tab also shows its memory. WebKit does not say which renderer process belongs to which tab, so each tab is matched by a short CPU probe (about 0.2 s per tab, cached afterwards); a tab that can't be matched, for example one with JavaScript turned off, shows "—". Memory is the process's proportional set size, so shared libraries are not counted once per tab.
+
+## [1.4.3] - 2026-10-03
+
+### Fixed
+- **Path-based ad/tracker blocking now actually blocks.** Requests matching `/ads/`, `/adserver/`, `/pagead/`, `/pixel.gif`, `/tracker.js`, `/telemetry`, `/analytics.js`, `/gtm.js`, `/collect?` and `/log_event` were only counted by the old Python check; WebKit still sent them. They are now rules in the native content blocker. They apply to images, scripts, styles, fonts, media and fetch/XHR only, never to a page you navigate to, and streaming hosts (YouTube, Vimeo, Twitch) and `.m3u8`/`.mpd` manifests are exempt. The per-site "Block ads" switch turns them off too.
+- The diagnose tool reported "Main process memory is growing" when a second browser instance started during a run, because it summed all main processes into one series. It now fits each process on its own.
+
+### Changed
+- The per-request Python ad matcher (and the optional `adblockparser` engine) is removed: the native blocker handles all blocking inside the web process.
+- The shield button no longer shows a count, and the Privacy Report no longer shows "Trackers & ads blocked": WebKit does not tell the browser about requests its content blocker drops, so those numbers were misleading. Tracking-parameter and HTTPS-upgrade counts are unchanged.
+
 ## [1.4.2] - 2026-10-03
 
 ### Changed

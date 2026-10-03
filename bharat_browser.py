@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.4.2 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.4.4 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -8,7 +8,7 @@ import os
 import json
 import shutil
 
-APP_VERSION = "1.4.2"
+APP_VERSION = "1.4.4"
 # The self-updater cannot rewrite a root-owned package install, so it keeps its updates in a per-user copy
 # that the launcher (/usr/bin/bharat-browser) prefers over the system one.
 USER_INSTALL_DIR = os.path.expanduser("~/.local/share/bharat-browser")
@@ -89,7 +89,6 @@ import threading
 import subprocess
 import urllib.parse
 import urllib.request
-from collections import Counter
 import gi
 import cairo
 
@@ -101,23 +100,10 @@ except ValueError:
 
 from gi.repository import Gtk, Gdk, GdkPixbuf, GObject, WebKit2, GLib, Gio, Pango
 
-# Import high-rating open-source ad-blocking engine (adblockparser) if available
-for adblock_path in [
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "adblockparser"),
-    os.path.expanduser("~/.local/share/bharat-browser/adblockparser"),
-    "/usr/share/bharat-browser/adblockparser",
-]:
-    if os.path.exists(adblock_path):
-        sys.path.insert(0, adblock_path)
-        break
 # -------------------------------------------------------------------------
-# 2-Stage Request Interceptor Filter (O(1) Domain Set Pre-lookup + Regex)
-# Maintains Throughput > 25,000 requests/sec
-#
-# Single source of truth: both the adblockparser-backed engine below and the
-# plain-Python fallback path use this same list, so having the optional
-# adblockparser dependency installed no longer buys strictly identical (and
-# previously much smaller) coverage to the fallback.
+# Ad/tracker lists. Blocking itself is done by WebKit's native content blocker
+# (build_content_blocker_rules_json), which runs inside the web process; nothing
+# here is matched per request in Python.
 # -------------------------------------------------------------------------
 BLOCKED_DOMAINS = {
     # Ad networks / exchanges
@@ -149,15 +135,11 @@ BLOCKED_DOMAINS = {
     'omtrdc.net', 'adobedtm.com', 'branch.io', 'app-measurement.com',
 }
 
-try:
-    from adblockparser import AdblockRules
-    ADBLOCK_ENGINE = AdblockRules([f"||{domain}^" for domain in sorted(BLOCKED_DOMAINS)])
-except Exception:
-    ADBLOCK_ENGINE = None
-
-BLOCKED_REGEX = re.compile(
-    r'(?:/adserver/|/ads/|/pagead/|/pixel\.gif|/tracker\.js|/telemetry|/analytics\.js|/gtm\.js|/collect\?|/log_event)',
-    re.IGNORECASE
+# Path fragments of ad/tracker endpoints, blocked on any host. (name, is_directory)
+BLOCKED_PATH_SEGMENTS = (
+    ('adserver', True), ('ads', True), ('pagead', True),
+    ('pixel.gif', False), ('tracker.js', False), ('telemetry', False),
+    ('analytics.js', False), ('gtm.js', False), ('collect?', False), ('log_event', False),
 )
 
 TRACKING_PARAMS = {
@@ -203,76 +185,31 @@ def _host_matches_domain_set(host, domain_set):
             return True
     return False
 
-def is_ad_or_tracker(url_str):
-    try:
-        if url_str.startswith("https://"):
-            rest = url_str[8:]
-        elif url_str.startswith("http://"):
-            rest = url_str[7:]
-        else:
-            parsed = urllib.parse.urlparse(url_str)
-            host = (parsed.hostname or '').lower()
-            path = parsed.path
-            rest = None
-
-        if rest is not None:
-            slash_idx = rest.find('/')
-            q_idx = rest.find('?')
-            if slash_idx != -1 and (q_idx == -1 or slash_idx < q_idx):
-                host = rest[:slash_idx]
-                path = rest[slash_idx:q_idx] if q_idx != -1 else rest[slash_idx:]
-            elif q_idx != -1:
-                host = rest[:q_idx]
-                path = ""
-            else:
-                host = rest
-                path = ""
-            if ':' in host:
-                host = host.split(':', 1)[0]
-            host = host.lower()
-
-        if not host:
-            return False
-
-        # Exempt YouTube / GoogleVideo streaming domains and manifest files from cancellation
-        if _host_matches_domain_set(host, STREAMING_EXEMPT_DOMAINS):
-            return False
-        if path.lower().endswith(STREAMING_EXEMPT_EXTENSIONS):
-            return False
-
-        if ADBLOCK_ENGINE is not None:
-            try:
-                return ADBLOCK_ENGINE.should_block(url_str)
-            except Exception:
-                pass
-
-        # Everything below only runs when the optional `adblockparser`
-        # dependency isn't installed, or it raised above: a plain-Python
-        # fallback over the same BLOCKED_DOMAINS/BLOCKED_REGEX data, not a
-        # second, independent blocking tier.
-        # Stage 1: O(1) Hierarchical Domain Set Pre-lookup
-        if _host_matches_domain_set(host, BLOCKED_DOMAINS):
-            return True
-
-        # Stage 2: Path Regex Matching
-        if path and BLOCKED_REGEX.search(path):
-            return True
-    except Exception:
-        pass
-    return False
-
 def build_content_blocker_rules_json(extra_domains=()):
-    """Compile BLOCKED_DOMAINS into a WKContentRuleList (WebKit's native,
-    network-level content blocker). This runs inside the web process itself
-    instead of round-tripping every subresource through a Python callback, so
-    it's faster and isn't dependent on request-mutation semantics of the
-    resource-load-started signal working the same way across WebKitGTK
-    versions. It's additive: the existing Python-level blocking in
-    on_resource_load_started stays in place unchanged as a second layer."""
+    """Compile the block lists into a WKContentRuleList (WebKit's native,
+    network-level content blocker). It runs inside the web process itself
+    instead of round-tripping every subresource through a Python callback, and
+    it is the only ad/tracker blocking layer: a request rewritten from the
+    resource-load-started signal is still sent by this WebKit, so Python can
+    count but not block."""
     # WebKit's content-extension regex engine doesn't support alternation
-    # ("Disjunctions are not supported yet"), so each domain gets two plain
-    # anchored patterns instead of one pattern with a `(sep|$)` alternation.
+    # ("Disjunctions are not supported yet"), so each pattern is its own rule.
     rules = []
+    # 1. Ad/tracker endpoints by path, on any host. Sub-resources only: a page the
+    #    user navigates to must never be blocked because its URL contains "/ads/".
+    #    Streaming hosts are exempt.
+    exempt = ["*" + d for d in sorted(STREAMING_EXEMPT_DOMAINS)]
+    for name, is_dir in BLOCKED_PATH_SEGMENTS:
+        pattern = "^https?://[^/?#]+/([^?#]*/)?" + re.escape(name) + ("/" if is_dir else "")
+        rules.append({"trigger": {"url-filter": pattern, "unless-domain": exempt,
+                                  "resource-type": ["image", "style-sheet", "script", "font", "raw", "svg-document", "media"]},
+                      "action": {"type": "block"}})
+    # 2. Streaming manifests are never blocked by the path rules above.
+    for ext in STREAMING_EXEMPT_EXTENSIONS:
+        for tail in ("$", "\\?"):
+            rules.append({"trigger": {"url-filter": "^https?://[^?#]+" + re.escape(ext) + tail},
+                          "action": {"type": "ignore-previous-rules"}})
+    # 3. Whole domains (and their subdomains).
     for domain in sorted(BLOCKED_DOMAINS):
         prefix = f"^https?://([a-z0-9-]+\\.)*{re.escape(domain)}"
         rules.append({"trigger": {"url-filter": prefix + "[:/]"}, "action": {"type": "block"}})
@@ -1568,6 +1505,95 @@ MEDIA_POLYFILL_JS = """
 })();
 """
 
+# ---------------------------------------------------------------------------
+# Per-tab memory. WebKit does not say which WebKitWebProcess renders which tab, so a tab
+# is matched to its process by giving it a short burst of work and seeing which child
+# process's CPU time moves. Memory is then read from /proc (PSS, so shared libraries are
+# not counted once per renderer).
+# ---------------------------------------------------------------------------
+try:
+    _CLK_TCK = os.sysconf("SC_CLK_TCK")
+except (AttributeError, ValueError, OSError):
+    _CLK_TCK = 100
+MEMORY_PROBE_MS = 200
+MEMORY_PROBE_JS = "(function(){var e=performance.now()+%d;while(performance.now()<e){}return 1})()" % MEMORY_PROBE_MS
+MEMORY_PROBE_TIMEOUT_MS = 3000
+MEMORY_PROBE_MIN_TICKS = max(2, int(_CLK_TCK * MEMORY_PROBE_MS / 1000 * 0.4))
+
+
+def _proc_stat_fields(pid):
+    """Fields of /proc/<pid>/stat after the command name (index 0 is the state)."""
+    with open(f"/proc/{pid}/stat") as f:
+        stat = f.read()
+    return stat[stat.rindex(")") + 2:].split()
+
+
+def _proc_ticks(pid):
+    try:
+        fields = _proc_stat_fields(pid)
+        return int(fields[11]) + int(fields[12])  # utime + stime
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _proc_pss_mb(pid):
+    try:
+        with open(f"/proc/{pid}/smaps_rollup") as f:
+            for line in f:
+                if line.startswith("Pss:"):
+                    return int(line.split()[1]) / 1024.0
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024.0
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def web_process_pids():
+    """PIDs of this browser's WebKitWebProcess renderers (every window, any depth)."""
+    children = {}
+    for name in os.listdir("/proc"):
+        if name.isdigit():
+            try:
+                children.setdefault(int(_proc_stat_fields(name)[1]), []).append(int(name))
+            except (OSError, ValueError, IndexError):
+                continue
+    found, stack = [], [os.getpid()]
+    while stack:
+        for pid in children.get(stack.pop(), []):
+            stack.append(pid)
+            try:
+                with open(f"/proc/{pid}/cmdline", "rb") as f:
+                    if b"WebKitWebProcess" in f.read():
+                        found.append(pid)
+            except OSError:
+                continue
+    return found
+
+
+def pick_probe_pid(before, after, min_ticks=MEMORY_PROBE_MIN_TICKS):
+    """The one process whose CPU time clearly jumped between the two {pid: ticks} samples,
+    or None when nothing moved enough or two moved about equally (so it is not guessed)."""
+    deltas = sorted(((after[p] - before[p], p) for p in after
+                     if p in before and after[p] is not None and before[p] is not None), reverse=True)
+    if not deltas or deltas[0][0] < min_ticks:
+        return None
+    if len(deltas) > 1 and deltas[1][0] * 1.5 > deltas[0][0]:
+        return None
+    return deltas[0][1]
+
+
+def format_memory_mb(mb):
+    if mb is None:
+        return "—"
+    return f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
+
+
 class BharatBrowserWindow(Gtk.Window):
     _global_css_loaded = False
 
@@ -1613,8 +1639,6 @@ class BharatBrowserWindow(Gtk.Window):
                 except Exception as e:
                     print("Icon load note:", e)
 
-        self.blocked_count = 0
-        self._shield_badge_update_scheduled = False
         self.downloads_history = []
         self._crash_counts = {}
         self._load_failure_counts = {}
@@ -1657,10 +1681,8 @@ class BharatBrowserWindow(Gtk.Window):
         # Per-site choices (permissions, zoom, ad blocking, JS) and privacy stats are
         # only persisted for normal windows; private windows keep them in memory.
         self.site_settings = {} if private else load_site_settings()
-        self.stats = {"since": time.time(), "blocked": 0, "params": 0, "https": 0} if private else load_privacy_stats()
-        self.session_stats = {"blocked": 0, "params": 0, "https": 0}
-        self.blocked_domains = Counter()
-        self.blocked_sites = Counter()
+        self.stats = {"since": time.time(), "params": 0, "https": 0} if private else load_privacy_stats()
+        self.session_stats = {"params": 0, "https": 0}
         self._closed_tabs = []
         self._http_allowed_hosts = set()
         self._http_tokens = {}
@@ -1905,9 +1927,9 @@ class BharatBrowserWindow(Gtk.Window):
 
         top_bar.pack_start(action_group, False, False, 0)
 
-        self.btn_shield = Gtk.Button(label="🛡  0")
+        self.btn_shield = Gtk.Button(label="🛡")
         self.btn_shield.get_style_context().add_class("btn-shield")
-        self.btn_shield.set_tooltip_text("Shield active — click for your Privacy Report")
+        self.btn_shield.set_tooltip_text("Ad & tracker shield — click for your Privacy Report")
         self.btn_shield.connect("clicked", lambda b: self.open_privacy_report())
         top_bar.pack_start(self.btn_shield, False, False, 0)
 
@@ -2169,7 +2191,7 @@ class BharatBrowserWindow(Gtk.Window):
         except Exception as e:
             print("Cache trim note:", e)
 
-    BASE_FILTER_ID = "bharat-adblock-v2"
+    BASE_FILTER_ID = "bharat-adblock-v3"  # bump whenever the built-in rules change: compiled filters are cached by id
 
     def _compile_content_blocker_filter(self):
         """Install the native content blocker. Compiled filters persist in WebKit's
@@ -2501,11 +2523,6 @@ class BharatBrowserWindow(Gtk.Window):
         .bharat-dialog check:checked, .bharat-dialog radio:checked {
             background-color: #6366f1;
             border-color: #6366f1;
-        }
-        .bharat-dialog .settings-section-frame {
-            background-color: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.10);
-            border-radius: 10px;
         }
         .bharat-dialog .settings-card {
             background-color: rgba(255, 255, 255, 0.035);
@@ -2901,9 +2918,6 @@ class BharatBrowserWindow(Gtk.Window):
                     urls.append(u)
         return urls, pinned
 
-    def _collect_session_urls(self):
-        return self._collect_session()[0]
-
     def _run_session_save(self):
         self._session_save_source = None
         if not self.is_private:
@@ -2928,16 +2942,14 @@ class BharatBrowserWindow(Gtk.Window):
             if hasattr(tab_box, '_bharat_webview'):
                 self._flush_page_view(tab_box._bharat_webview)
 
-        if not self.is_private and getattr(self, 'clear_history_on_exit', False):
+        if not self.is_private and self.clear_history_on_exit:
             self.url_history = []
             if self._history_save_source is not None:
                 GLib.source_remove(self._history_save_source)
                 self._history_save_source = None
             save_url_history([])
-            if hasattr(self, 'url_completion_store'):
-                self.url_completion_store.clear()
-            if hasattr(self, '_page_view_start'):
-                self._page_view_start.clear()
+            self.url_completion_store.clear()
+            self._page_view_start.clear()
 
         self._flush_pending_saves()
         if not self.is_private:
@@ -2959,8 +2971,7 @@ class BharatBrowserWindow(Gtk.Window):
             self._crash_counts.pop(id(webview), None)
             self._load_failure_counts.pop(id(webview), None)
             self._flush_page_view(webview)
-            if hasattr(self, '_page_view_start'):
-                self._page_view_start.pop(id(webview), None)
+            self._page_view_start.pop(id(webview), None)
 
             # Disconnect all attached signal handlers to avoid retaining references
             sig_ids = getattr(webview, '_bharat_sig_ids', [])
@@ -2983,7 +2994,7 @@ class BharatBrowserWindow(Gtk.Window):
             except Exception:
                 pass
 
-        if getattr(self, '_current_active_tab_box', None) == tab_box:
+        if self._current_active_tab_box == tab_box:
             self._current_active_tab_box = None
 
         self._tab_last_active.pop(id(tab_box), None)
@@ -3030,7 +3041,7 @@ class BharatBrowserWindow(Gtk.Window):
         # "page" is the tab_box widget being switched TO; whatever was
         # active before (tracked from the previous call) just became
         # background, so its inactivity clock starts now.
-        previous_tab_box = getattr(self, '_current_active_tab_box', None)
+        previous_tab_box = self._current_active_tab_box
         if previous_tab_box is not None:
             self._tab_last_active[id(previous_tab_box)] = time.monotonic()
         self._current_active_tab_box = page
@@ -3051,7 +3062,7 @@ class BharatBrowserWindow(Gtk.Window):
     def _check_tab_suspension(self):
         if self.tab_suspension_enabled:
             now = time.monotonic()
-            active_tab_box = getattr(self, '_current_active_tab_box', None)
+            active_tab_box = self._current_active_tab_box
             for i in range(self.notebook.get_n_pages()):
                 tab_box = self.notebook.get_nth_page(i)
                 if tab_box is active_tab_box or not hasattr(tab_box, '_bharat_webview'):
@@ -4011,27 +4022,6 @@ class BharatBrowserWindow(Gtk.Window):
                 uri = sanitized
                 self._count_event("params")
 
-        if self._site_wants_filter(site_host_of(webview.get_uri())) and is_ad_or_tracker(uri):
-            self.blocked_count += 1
-            self._count_blocked(webview, uri)
-            if not getattr(self, '_shield_badge_update_scheduled', False):
-                self._shield_badge_update_scheduled = True
-                GLib.timeout_add(250, self._flush_shield_badge_update)
-            if ".js" in uri or "script" in uri:
-                request.set_uri("data:application/javascript,")
-            elif ".json" in uri:
-                request.set_uri("data:application/json,{}")
-            else:
-                request.set_uri("data:text/plain,")
-
-    def _flush_shield_badge_update(self):
-        self._shield_badge_update_scheduled = False
-        self.update_shield_badge()
-        return False
-
-    def update_shield_badge(self):
-        self.btn_shield.set_label(f"🛡️ {self.blocked_count}")
-
     def on_url_activate(self, entry):
         text = entry.get_text().strip()
         if not text:
@@ -4443,18 +4433,6 @@ class BharatBrowserWindow(Gtk.Window):
         else:
             self.statusbar.push(self.context_id, "DarkReader Engine Disabled ☀️")
 
-    def execute_js_on_webview(self, webview, js_code):
-        try:
-            if hasattr(webview, "evaluate_javascript"):
-                webview.evaluate_javascript(js_code, -1, None, None, None, None, None)
-            else:
-                webview.run_javascript(js_code, None, None, None)
-        except Exception:
-            try:
-                webview.run_javascript(js_code, None, None, None)
-            except Exception as e:
-                print("JS execution note:", e)
-
     def _set_dark_stylesheet(self, ucm, enabled):
         # Flag lives on the content manager, not the webview: a popup opened
         # via on_create_webview() shares its opener's manager, and adding or
@@ -4598,7 +4576,7 @@ class BharatBrowserWindow(Gtk.Window):
 
         # Header banner: logo, title, tagline and a tricolour accent line.
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
-        logo_path = getattr(self, "icon_path", None)
+        logo_path = self.icon_path
         if logo_path:
             try:
                 logo_pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(logo_path, 52, 52, True)
@@ -5186,13 +5164,6 @@ class BharatBrowserWindow(Gtk.Window):
         self.stats[key] = self.stats.get(key, 0) + 1
         self.session_stats[key] = self.session_stats.get(key, 0) + 1
 
-    def _count_blocked(self, webview, uri):
-        self._count_event("blocked")
-        self.blocked_domains[site_host_of(uri)] += 1
-        self.blocked_sites[site_host_of(webview.get_uri())] += 1
-        if not self.is_private:
-            self._schedule_session_save()  # stats ride along with the debounced session write
-
     def build_privacy_report_html(self):
         esc = html_module.escape
         since = time.strftime("%d %b %Y", time.localtime(self.stats.get("since", time.time())))
@@ -5201,20 +5172,12 @@ class BharatBrowserWindow(Gtk.Window):
             return (f"<div class='card'><div class='n'>{value:,}</div><div class='l'>{esc(label)}</div>"
                     f"<div class='s'>{esc(sub)}</div></div>")
 
-        def table(title, counter, empty):
-            rows = "".join(
-                f"<tr><td>{esc(host or '(unknown)')}</td><td class='c'>{count:,}</td>"
-                f"<td class='b'><span style='width:{max(4, int(100 * count / max(counter.values())))}%'></span></td></tr>"
-                for host, count in counter.most_common(10))
-            body = f"<table>{rows}</table>" if rows else f"<p class='e'>{esc(empty)}</p>"
-            return f"<section><h2>{esc(title)}</h2>{body}</section>"
-
         s, t = self.session_stats, self.stats
         return f"""<!doctype html><html><head><meta charset="utf-8"><title>Privacy Report</title><style>
 body{{margin:0;background:#0b0e14;color:#f8fafc;font-family:system-ui,sans-serif;padding:0 20px}}
 .flag{{position:fixed;top:0;left:0;right:0;height:5px;background:linear-gradient(90deg,#ff9933 33%,#fff 33% 66%,#138808 66%)}}
 .wrap{{max-width:760px;margin:0 auto;padding:44px 0 60px}}h1{{margin:0 0 4px}}.sub{{color:#94a3b8;margin-bottom:26px}}
-.cards{{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:10px}}
+.cards{{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-bottom:10px}}
 .card{{background:#11151d;border:1px solid #243049;border-radius:14px;padding:18px;border-left:3px solid #6366f1}}
 .n{{font-size:30px;font-weight:800}}.l{{color:#cbd5e1;margin-top:2px}}.s{{color:#64748b;font-size:12px;margin-top:6px}}
 h2{{font-size:15px;color:#a5b4fc;letter-spacing:.5px;margin:30px 0 8px}}
@@ -5224,12 +5187,9 @@ td.c{{text-align:right;color:#cbd5e1;width:70px}}td.b{{width:30%}}td.b span{{dis
 @media(max-width:560px){{.cards{{grid-template-columns:1fr}}}}
 </style></head><body><div class="flag"></div><div class="wrap">
 <h1>🛡️ Privacy Report</h1><div class="sub">What Bharat Browser protected you from. Totals since {esc(since)}.</div>
-<div class="cards">{card("Trackers & ads blocked", t.get("blocked", 0), f"{s.get('blocked', 0):,} this session")}
-{card("Tracking parameters removed", t.get("params", 0), f"{s.get('params', 0):,} this session")}
+<div class="cards">{card("Tracking parameters removed", t.get("params", 0), f"{s.get('params', 0):,} this session")}
 {card("Connections upgraded to HTTPS", t.get("https", 0), f"{s.get('https', 0):,} this session")}</div>
-{table("Most blocked tracker domains (this session)", self.blocked_domains, "Nothing blocked yet this session.")}
-{table("Sites with the most blocked requests (this session)", self.blocked_sites, "Nothing blocked yet this session.")}
-<div class="note">Counts cover requests blocked by the browser's built-in shield. The native content blocker and downloaded tracker lists also work silently, so real protection is higher than shown. {"Private windows don't save any of this." if self.is_private else ""}</div>
+<div class="note">Ads and trackers are blocked inside the web engine by the built-in shield and the downloaded tracker lists. WebKit does not report those blocks to the browser, so they are not counted here. {"Private windows don't save any of this." if self.is_private else ""}</div>
 </div></body></html>"""
 
     def open_privacy_report(self):
@@ -5287,10 +5247,6 @@ td.c{{text-align:right;color:#cbd5e1;width:70px}}td.b{{width:30%}}td.b span{{dis
         entry = self._closed_tabs.pop()
         self.create_new_tab(entry["url"])
 
-    def _pinned_count(self):
-        return sum(1 for i in range(self.notebook.get_n_pages())
-                   if getattr(self.notebook.get_nth_page(i), "_bharat_pinned", False))
-
     def set_tab_pinned(self, tab_box, pinned):
         if bool(getattr(tab_box, "_bharat_pinned", False)) == bool(pinned):
             return
@@ -5324,6 +5280,183 @@ td.c{{text-align:right;color:#cbd5e1;width:70px}}td.b{{width:30%}}td.b span{{dis
         if uri and not uri.startswith("about:"):
             self.create_new_tab(uri)
 
+    # ------------------------------------------------------------------
+    # Per-tab memory
+    # ------------------------------------------------------------------
+    def _tab_boxes(self):
+        boxes = (self.notebook.get_nth_page(i) for i in range(self.notebook.get_n_pages()))
+        return [tb for tb in boxes if hasattr(tb, "_bharat_webview")]
+
+    def measure_tab_memory(self, on_done, tabs=None):
+        """Work out how much memory each tab's renderer uses, one tab at a time so the
+        window stays responsive. Calls on_done({tab_box: {"state", "pid", "mb"}}) with
+        state "ok", "suspended" or "unknown" (the tab could not be matched to a process)."""
+        queue = list(self._tab_boxes() if tabs is None else tabs)
+        live = set(web_process_pids())
+        results = {}
+
+        def record(tab, state, pid=None):
+            results[tab] = {"state": state, "pid": pid, "mb": _proc_pss_mb(pid) if pid else None}
+
+        def step():
+            while queue:
+                tab = queue.pop(0)
+                wv = getattr(tab, "_bharat_webview", None)
+                if wv is None or tab.get_parent() is None:
+                    continue  # closed while we were measuring
+                if id(tab) in self._suspended_session_states:
+                    record(tab, "suspended")
+                    continue
+                pid = getattr(tab, "_bharat_mem_pid", None)
+                if pid in live and wv.get_uri() == getattr(tab, "_bharat_mem_uri", None):
+                    record(tab, "ok", pid)  # same process and page as the last probe
+                    continue
+                probe(tab, wv)
+                return False
+            on_done(results)
+            return False
+
+        def probe(tab, wv):
+            pids = list(live)
+            before = {p: _proc_ticks(p) for p in pids}
+            state = {"done": False}
+
+            def finish(ran):
+                if state["done"]:
+                    return
+                state["done"] = True
+                pid = None
+                if ran:
+                    pid = pick_probe_pid(before, {p: _proc_ticks(p) for p in pids})
+                if pid:
+                    tab._bharat_mem_pid, tab._bharat_mem_uri = pid, wv.get_uri()
+                record(tab, "ok" if pid else "unknown", pid)
+                GLib.idle_add(step)
+
+            def js_done(view, result, _data):
+                try:
+                    view.run_javascript_finish(result)
+                    finish(True)
+                except Exception:
+                    finish(False)  # e.g. JavaScript turned off for this site
+
+            wv.run_javascript(MEMORY_PROBE_JS, None, js_done, None)
+            GLib.timeout_add(MEMORY_PROBE_TIMEOUT_MS, lambda: (finish(False), False)[1])
+
+        GLib.idle_add(step)
+
+    @staticmethod
+    def _tab_memory_text(info):
+        if info["state"] == "suspended":
+            return "suspended"
+        return format_memory_mb(info["mb"])
+
+    def open_tab_memory(self):
+        dialog = Gtk.Dialog(title="Tab Memory", transient_for=self, modal=True, destroy_with_parent=True)
+        dialog.get_style_context().add_class("bharat-dialog")
+        self.apply_dark_titlebar(dialog, "Tab Memory")
+        dialog.add_button("Close", Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(620, 400)
+        alive = {"v": True}
+        dialog.connect("destroy", lambda _d: alive.__setitem__("v", False))
+
+        area = dialog.get_content_area()
+        for setter in (area.set_margin_start, area.set_margin_end, area.set_margin_top, area.set_margin_bottom):
+            setter(16)
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        area.pack_start(vbox, True, True, 0)
+
+        summary = Gtk.Label(xalign=0.0)
+        vbox.pack_start(summary, False, False, 0)
+
+        # title, memory text, sort key (MB), tab widget
+        store = Gtk.ListStore(str, str, float, GObject.TYPE_PYOBJECT)
+        store.set_sort_column_id(2, Gtk.SortType.DESCENDING)
+        tree = Gtk.TreeView(model=store)
+        title_cell = Gtk.CellRendererText()
+        title_cell.set_property("ellipsize", Pango.EllipsizeMode.END)
+        col = Gtk.TreeViewColumn("Tab", title_cell, text=0)
+        col.set_expand(True)
+        tree.append_column(col)
+        mem_cell = Gtk.CellRendererText()
+        mem_cell.set_property("xalign", 1.0)
+        col = Gtk.TreeViewColumn("Memory", mem_cell, text=1)
+        col.set_sort_column_id(2)
+        col.set_min_width(110)
+        tree.append_column(col)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_shadow_type(Gtk.ShadowType.IN)
+        scroll.add(tree)
+        vbox.pack_start(scroll, True, True, 0)
+
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        vbox.pack_start(buttons, False, False, 0)
+        actions = []
+
+        def selected_tab():
+            model, it = tree.get_selection().get_selected()
+            return model[it][3] if it else None
+
+        def add_button(label, fn):
+            b = Gtk.Button(label=label)
+            b.connect("clicked", lambda _b: fn())
+            buttons.pack_start(b, False, False, 0)
+            actions.append(b)
+
+        def go_to():
+            tab = selected_tab()
+            if tab is not None and tab.get_parent() is not None:
+                self.notebook.set_current_page(self.notebook.page_num(tab))
+                dialog.response(Gtk.ResponseType.CLOSE)
+
+        def suspend():
+            tab = selected_tab()
+            if tab is not None and tab.get_parent() is not None and tab is not self._current_active_tab_box:
+                self._suspend_tab(tab)
+                refresh()
+            else:
+                summary.set_text("The tab you are looking at can't be suspended.")
+
+        def close():
+            tab = selected_tab()
+            if tab is not None and tab.get_parent() is not None:
+                self.close_tab(tab)
+                refresh()
+
+        add_button("Go to tab", go_to)
+        add_button("Suspend", suspend)
+        add_button("Close tab", close)
+        add_button("Refresh", lambda: refresh())
+
+        def refresh():
+            summary.set_text("Measuring…")
+            for b in actions:
+                b.set_sensitive(False)
+
+            def done(results):
+                if not alive["v"]:
+                    return
+                store.clear()
+                total, unknown = 0.0, 0
+                for tab, info in results.items():
+                    if tab.get_parent() is None:
+                        continue
+                    label = tab._bharat_label.get_text() if hasattr(tab, "_bharat_label") else ""
+                    store.append([label or "(untitled)", self._tab_memory_text(info), info["mb"] or 0.0, tab])
+                    total += info["mb"] or 0.0
+                    unknown += info["state"] == "unknown"
+                note = f"  ({unknown} couldn't be measured)" if unknown else ""
+                summary.set_text(f"{format_memory_mb(total)} in use by the tabs in this window{note}")
+                for b in actions:
+                    b.set_sensitive(True)
+
+            self.measure_tab_memory(done)
+
+        dialog.show_all()
+        refresh()
+        dialog.run()
+        dialog.destroy()
+
     def _on_tab_header_click(self, tab_box, event):
         if event.type != Gdk.EventType.BUTTON_PRESS:
             return False
@@ -5335,6 +5468,10 @@ td.c{{text-align:right;color:#cbd5e1;width:70px}}td.b{{width:30%}}td.b span{{dis
             return False
         menu = Gtk.Menu()
         pinned = getattr(tab_box, "_bharat_pinned", False)
+        mem_item = Gtk.MenuItem(label="Memory: measuring…")
+        mem_item.set_sensitive(False)
+        menu.append(mem_item)
+        menu.append(Gtk.SeparatorMenuItem())
         entries = [
             ("Reload", lambda: tab_box._bharat_webview.reload()),
             ("Duplicate Tab", lambda: self.duplicate_tab(tab_box)),
@@ -5355,6 +5492,8 @@ td.c{{text-align:right;color:#cbd5e1;width:70px}}td.b{{width:30%}}td.b span{{dis
             menu.append(item)
         menu.show_all()
         menu.popup_at_pointer(event)
+        self.measure_tab_memory(
+            lambda r: tab_box in r and mem_item.set_label("Memory: " + self._tab_memory_text(r[tab_box])), [tab_box])
         return True
 
     # ------------------------------------------------------------------
@@ -5401,6 +5540,7 @@ td.c{{text-align:right;color:#cbd5e1;width:70px}}td.b{{width:30%}}td.b span{{dis
         item("New Tab  (Ctrl+T)", lambda: self.create_new_tab(self.homepage))
         item("New Private Window  (Ctrl+Shift+N)", self.open_private_window)
         item("Reopen Closed Tab  (Ctrl+Shift+T)", self.reopen_closed_tab, bool(self._closed_tabs))
+        item("Tab Memory…", self.open_tab_memory)
         sep()
         item("Reader Mode  (Ctrl+Alt+R)", self.toggle_reader_mode)
         item("Print…  (Ctrl+P)", self.print_active_page)
