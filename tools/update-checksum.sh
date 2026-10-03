@@ -21,3 +21,10 @@ else:
         f.write("\n")
     print(f"package.json sha256 updated to {digest}")
 PY
+
+# Sign the release (Ed25519) so the in-app updater accepts it. Must run after the
+# hash above, and again whenever bharat_browser.py or the version changes. Without
+# the private key the signature is removed and the updater will refuse this release.
+if ! python3 "$ROOT/tools/sign-release.py" sign; then
+    echo "WARNING: release NOT signed; installed browsers will refuse to auto-update to it." >&2
+fi

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bharat Browser v1.3.5 - GTK3 / WebKit2 Python Application
+Bharat Browser v1.3.6 - GTK3 / WebKit2 Python Application
 Modern, Ultra-Fast, Multi-Tab, and Privacy-First Web Browser engineered for Linux (Ubuntu)
 """
 import sys
@@ -8,7 +8,7 @@ import os
 import json
 import shutil
 
-APP_VERSION = "1.3.5"
+APP_VERSION = "1.3.6"
 # The self-updater cannot rewrite a root-owned package install, so it keeps its updates in a per-user copy
 # that the launcher (/usr/bin/bharat-browser) prefers over the system one.
 USER_INSTALL_DIR = os.path.expanduser("~/.local/share/bharat-browser")
@@ -302,6 +302,103 @@ HISTORY_FILE = os.path.join(CONFIG_DIR, "history.json")
 HISTORY_MAX_ENTRIES = 500
 BOOKMARKS_FILE = os.path.join(CONFIG_DIR, "bookmarks.json")
 BOOKMARKS_MAX_ENTRIES = 5000
+
+# --- Update signature verification (Ed25519, RFC 8032) -----------------------
+# The updater only installs a release whose package.json "signature" verifies
+# against this public key; the matching private key lives off-repo on the
+# release machine (tools/sign-release.py). Verification is pure Python so end
+# users need no extra packages. Signed message:
+#   b"bharat-browser-update\n" + version + b"\n" + bharat_browser.py bytes
+# NOTE: changing the key means users on older versions can no longer
+# auto-update; they must reinstall the package once.
+UPDATE_PUBLIC_KEY_HEX = "5c846fe6ac0d47c188f3f71ade52566f75a3f9af80764c5064a1a29859ec7844"
+_UPDATE_SIGNATURE_PREFIX = b"bharat-browser-update\n"
+
+# ed25519 verify begin
+_ED_P = 2 ** 255 - 19
+_ED_L = 2 ** 252 + 27742317777372353535851937790883648493
+_ED_D = -121665 * pow(121666, _ED_P - 2, _ED_P) % _ED_P
+_ED_I = pow(2, (_ED_P - 1) // 4, _ED_P)
+
+
+def _ed_recover_x(y, sign):
+    if y >= _ED_P:
+        return None
+    x2 = (y * y - 1) * pow(_ED_D * y * y + 1, _ED_P - 2, _ED_P) % _ED_P
+    if x2 == 0:
+        return None if sign else 0
+    x = pow(x2, (_ED_P + 3) // 8, _ED_P)
+    if (x * x - x2) % _ED_P != 0:
+        x = x * _ED_I % _ED_P
+    if (x * x - x2) % _ED_P != 0:
+        return None
+    if (x & 1) != sign:
+        x = _ED_P - x
+    return x
+
+
+def _ed_add(a, b):
+    A = (a[1] - a[0]) * (b[1] - b[0]) % _ED_P
+    B = (a[1] + a[0]) * (b[1] + b[0]) % _ED_P
+    C = 2 * a[3] * b[3] * _ED_D % _ED_P
+    D = 2 * a[2] * b[2] % _ED_P
+    E, F, G, H = B - A, D - C, D + C, B + A
+    return (E * F % _ED_P, G * H % _ED_P, F * G % _ED_P, E * H % _ED_P)
+
+
+def _ed_mul(k, point):
+    result = (0, 1, 1, 0)
+    while k > 0:
+        if k & 1:
+            result = _ed_add(result, point)
+        point = _ed_add(point, point)
+        k >>= 1
+    return result
+
+
+def _ed_decompress(data):
+    if len(data) != 32:
+        return None
+    y = int.from_bytes(data, "little")
+    sign = y >> 255
+    y &= (1 << 255) - 1
+    x = _ed_recover_x(y, sign)
+    if x is None:
+        return None
+    return (x, y, 1, x * y % _ED_P)
+
+
+_ED_BASE_Y = 4 * pow(5, _ED_P - 2, _ED_P) % _ED_P
+_ED_BASE_X = _ed_recover_x(_ED_BASE_Y, 0)
+_ED_BASE = (_ED_BASE_X, _ED_BASE_Y, 1, _ED_BASE_X * _ED_BASE_Y % _ED_P)
+
+
+def ed25519_verify(public_key, message, signature):
+    """True only if `signature` is a valid Ed25519 signature of `message`."""
+    if len(public_key) != 32 or len(signature) != 64:
+        return False
+    A = _ed_decompress(public_key)
+    R = _ed_decompress(signature[:32])
+    s = int.from_bytes(signature[32:], "little")
+    if A is None or R is None or s >= _ED_L:
+        return False
+    h = int.from_bytes(hashlib.sha512(signature[:32] + public_key + message).digest(), "little") % _ED_L
+    lhs = _ed_mul(s, _ED_BASE)
+    rhs = _ed_add(R, _ed_mul(h, A))
+    return ((lhs[0] * rhs[2] - rhs[0] * lhs[2]) % _ED_P == 0
+            and (lhs[1] * rhs[2] - rhs[1] * lhs[2]) % _ED_P == 0)
+# ed25519 verify end
+
+
+def verify_update_signature(version, source, signature_hex):
+    """True if `source` (bharat_browser.py bytes) is the release signed for `version`."""
+    try:
+        signature = bytes.fromhex(signature_hex)
+        message = _UPDATE_SIGNATURE_PREFIX + version.encode() + b"\n" + source
+        return ed25519_verify(bytes.fromhex(UPDATE_PUBLIC_KEY_HEX), message, signature)
+    except (ValueError, TypeError):
+        return False
+
 
 # Chrome-compatible UA so sites don't serve "unsupported browser" pages or flag
 # an outdated client as a bot. Chrome freezes everything after the major
@@ -2693,6 +2790,7 @@ class BharatBrowserWindow(Gtk.Window):
                 data = json.loads(response.read(1 << 20).decode('utf-8'))
                 remote_version = data.get("version", "").strip()
                 remote_sha256 = data.get("sha256", "").strip().lower()
+                remote_signature = data.get("signature", "").strip().lower()
 
             if not remote_version or self.compare_versions(remote_version, self.current_version) <= 0:
                 print(f"Bharat Browser is up to date (v{self.current_version}).")
@@ -2700,7 +2798,7 @@ class BharatBrowserWindow(Gtk.Window):
                 return
 
             print(f"Update available: v{self.current_version} -> v{remote_version}. Downloading...")
-            installed = self.download_and_install_update(remote_version, remote_sha256)
+            installed = self.download_and_install_update(remote_version, remote_sha256, remote_signature)
             if installed:
                 print(f"Update v{remote_version} downloaded and installed; restart to apply.")
             else:
@@ -2728,13 +2826,14 @@ class BharatBrowserWindow(Gtk.Window):
                     data = json.loads(response.read(1 << 20).decode('utf-8'))
                     remote_version = data.get("version", "").strip()
                     remote_sha256 = data.get("sha256", "").strip().lower()
+                    remote_signature = data.get("signature", "").strip().lower()
 
                 if not remote_version or self.compare_versions(remote_version, self.current_version) <= 0:
                     GLib.idle_add(_done, f"✅ Bharat Browser is up to date (v{self.current_version}).", False, True)
                     return
 
                 GLib.idle_add(lambda: status_lbl.set_markup(f"<i>⬇️ New version v{remote_version} found! Downloading update...</i>"))
-                installed = self.download_and_install_update(remote_version, remote_sha256)
+                installed = self.download_and_install_update(remote_version, remote_sha256, remote_signature)
                 if installed:
                     GLib.idle_add(_done, f"🎉 Version v{remote_version} installed successfully! Click 'Restart Now' to apply.", True, True)
                     GLib.idle_add(self.show_update_notification_dialog, remote_version, True)
@@ -2754,13 +2853,14 @@ class BharatBrowserWindow(Gtk.Window):
 
     MAX_UPDATE_SOURCE_BYTES = 5 * 1024 * 1024  # sanity cap; the script is ~60KB today
 
-    def download_and_install_update(self, remote_version, remote_sha256=""):
+    def download_and_install_update(self, remote_version, remote_sha256="", remote_signature=""):
         """Download bharat_browser.py for the announced release tag and replace the
         running script in place. Only runs if the target file is writable by this
         user; otherwise the update is left for the system package manager / manual
         copy. Fetches from an immutable tag (not the mutable 'master' branch) and,
         when package.json publishes a "sha256" field for the release, verifies the
-        downloaded bytes against it before installing anything."""
+        downloaded bytes against it, and always requires a valid Ed25519
+        "signature" (see verify_update_signature) before installing anything."""
         target_path = os.path.abspath(__file__)
         if not os.access(target_path, os.W_OK):
             # System-wide package install (root-owned): update a per-user copy instead, which the launcher prefers.
@@ -2786,7 +2886,14 @@ class BharatBrowserWindow(Gtk.Window):
                     print(f"Auto-update install failed: checksum mismatch (expected {remote_sha256}, got {digest}).")
                     return False
             else:
-                print("Auto-update note: release did not publish a sha256 checksum; installing on tag pin + syntax check only.")
+                print("Auto-update note: release did not publish a sha256 checksum; relying on the signature check.")
+
+            # The checksum only proves the download matches package.json, which
+            # comes from the same place; the signature proves the release was
+            # made by whoever holds the private key. No valid signature, no install.
+            if not verify_update_signature(remote_version, new_source, remote_signature):
+                print(f"Auto-update install failed: v{remote_version} has a missing or invalid signature; refusing to install.")
+                return False
 
             # Reject anything that isn't at least syntactically valid Python
             ast.parse(new_source.decode('utf-8'))
