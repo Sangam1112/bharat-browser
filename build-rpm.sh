@@ -398,8 +398,12 @@ EOF
     cp ~/rpmbuild/RPMS/noarch/bharat-browser-${VERSION}-1*.noarch.rpm ./
 fi
 
-# Package standalone tarball for Fedora (includes install-fedora.sh, unlike the RPM buildroot)
-cp install-fedora.sh "${BUILD_ROOT}/install-fedora.sh"
+# Package standalone tarball for Fedora. install-fedora.sh copies bharat_browser.py,
+# assets/ and bharat-browser.desktop from its OWN directory, so those must sit next to
+# it at the top level (the usr/ tree alone is not enough: the script would fail with
+# "cp: cannot stat 'bharat_browser.py'"). tests/test_installers.py guards this.
+cp install-fedora.sh bharat_browser.py bharat-browser.desktop LICENSE "${BUILD_ROOT}/"
+cp -r assets "${BUILD_ROOT}/assets"
 chmod +x "${BUILD_ROOT}/install-fedora.sh"
 tar -czf "bharat-browser_${VERSION}_fedora.tar.gz" -C "$BUILD_ROOT" .
 mkdir -p "$OUTPUT_DIR"
